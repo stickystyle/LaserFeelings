@@ -14,6 +14,11 @@
 - Q: Should dice rolling be handled by external dice bot/roller or built into the system? → A: Built-in dice roller with DM override capability
 - Q: Which database technology should be used for memory storage? → A: Neo4j graph database for relationship-heavy queries and temporal tracking
 - Q: How should the system handle LLM API failures, rate limits, or timeouts? → A: Retry multiple times with longer waits between attempts
+- Q: What specific exponential backoff parameters should be used for LLM API retries? → A: Standard: 2s, 5s, 10s max retries = 5 attempts within ~35 seconds
+- Q: How should the DM interact with the standalone command-line tool? → A: Turn-based prompts: System prompts DM at each phase (e.g., "Enter narration:", "Override roll? [y/n]:")
+- Q: Should the dice roller support full D&D 5e notation or only Lasers & Feelings dice mechanics? → A: Lasers & Feelings only: Support 1d6 rolls exclusively (minimal implementation)
+- Q: At what token usage threshold should the system trigger context window compression? → A: Balanced: Trigger at 80% of token limit (reasonable safety margin)
+- Q: How should the DM create and configure AI player-character pairs at session start? → A: JSON configuration file: DM creates `characters.json` with all player/character attributes before starting
 
 ## Game System
 
@@ -191,7 +196,7 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 - What happens when multiple AI players reach stalemate with no consensus? (System must timeout and force decision by vote after reasonable discussion period - 5 rounds or 2 minutes)
 - How does system handle AI player disconnection or phase failure mid-turn? (System rolls back to last stable phase, retries once, then flags for DM intervention if retry fails)
 - What happens when DM provides information that contradicts stored memory? (System should update memory with DM's version as canonical truth)
-- How does system handle context window approaching token limits? (System must swap recent messages for relevant memory summaries before overflow occurs)
+- How does system handle context window approaching token limits? (System must swap recent messages for relevant memory summaries when usage reaches 80% of token limit to prevent overflow)
 - What happens when AI character personality drifts over long session? (System may need to reinforce personality prompts periodically or reset between sessions)
 
 ## Requirements *(mandatory)*
@@ -201,6 +206,7 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 **MVP Requirements (Single AI Player):**
 
 - **FR-001**: System MUST implement separate player and character layers for each AI, where player layer makes strategic out-of-character decisions and character layer performs in-character roleplay only
+- **FR-001a**: System MUST load AI player-character configurations from a `characters.json` file at session start, containing all required attributes (name, style, role, number, goals, equipment, player personality traits)
 - **FR-002**: System MUST enforce strict turn phase sequencing: DM Narration → Memory Query → Strategic Intent → Character Action → Validation → DM Adjudication → Dice Resolution (auto-rolled with DM override option) → DM Outcome → Character Reaction → Memory Storage. If a phase fails or times out, system MUST rollback to the last stable phase, retry once, and flag for DM intervention if retry fails
 - **FR-003**: System MUST detect when AI generates outcome language (kills, hits, successfully, manages to, strikes, "The X falls", future narration) and prevent it from reaching DM
 - **FR-004**: System MUST retry failed validation responses up to 3 times with progressively stricter prompting before triggering fallback (auto-correct or DM flag)
@@ -211,8 +217,8 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 - **FR-009**: System MUST allow DM to provide information to player layer only, character layer only, or both, with enforcement that characters cannot use player-only knowledge
 - **FR-010**: System SHOULD complete turn execution within 10 seconds (P95) when LLM APIs are responsive, but timing is not critical for MVP (research focus allows flexible pacing beyond this target)
 - **FR-011**: System MUST preserve game state on unexpected errors and be recoverable from any phase without data loss
-- **FR-012**: System MUST include built-in dice roller supporting D&D 5e notation (d20, advantage/disadvantage, modifiers) that auto-rolls by default, with DM ability to manually override any result before resolution
-- **FR-013**: System MUST handle LLM API failures, rate limits, and timeouts by retrying with exponential backoff (increasing wait times between attempts), then trigger phase rollback and DM flag if all retries exhausted
+- **FR-012**: System MUST include built-in dice roller supporting 1d6 rolls (Lasers & Feelings mechanics only) that auto-rolls by default, with DM ability to manually override any result before resolution
+- **FR-013**: System MUST handle LLM API failures, rate limits, and timeouts by retrying with exponential backoff (2s, 5s, 10s delays for maximum 5 attempts within ~35 seconds), then trigger phase rollback and DM flag if all retries exhausted
 
 **Full System Requirements (3-4 AI Players):**
 
@@ -332,5 +338,6 @@ The following capabilities are explicitly **not** included in this feature:
 
 - Large language model API access (GPT-4 or equivalent) for AI player and character agent implementation
 - Neo4j graph database (local instance) for memory storage supporting relationship traversal, temporal tracking, and complex queries on NPC relationships, events, and party dynamics
-- Command-line interface framework (system operates as standalone CLI tool with no VTT integration)
-- Built-in dice rolling functionality supporting standard D&D 5e dice notation (d20, d6, advantage/disadvantage, modifiers) with DM override capability
+- Command-line interface framework using turn-based prompts (system prompts DM at each phase: "Enter narration:", "Override roll? [y/n]:", etc.)
+- Built-in dice rolling functionality supporting 1d6 rolls (Lasers & Feelings mechanics only) with DM override capability
+- JSON configuration file (`characters.json`) for defining AI player-character pairs with all required attributes (name, style, role, number, goals, equipment, player personality traits)
