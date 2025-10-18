@@ -1,0 +1,321 @@
+# Agent Interface Contracts
+
+openapi: 3.0.0
+info:
+  title: AI TTRPG Agent Interfaces
+  version: 1.0.0
+  description: Contract specifications for BasePersona and Character agents
+
+components:
+  schemas:
+    # Input/Output Types
+    Message:
+      type: object
+      required: [message_id, timestamp, channel, from_agent, content, message_type, turn_number, phase]
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        channel:
+          type: string
+          enum: [in_character, out_of_character, player_to_character]
+        from_agent:
+          type: string
+        to_agents:
+          type: array
+          items:
+            type: string
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        message_type:
+          type: string
+          enum: [narration, dialogue, action, reaction, discussion, directive]
+        turn_number:
+          type: integer
+          minimum: 1
+        phase:
+          type: string
+
+    Intent:
+      type: object
+      required: [agent_id, strategic_goal, reasoning]
+      properties:
+        agent_id:
+          type: string
+        strategic_goal:
+          type: string
+          description: High-level objective
+        reasoning:
+          type: string
+          description: Why this approach
+        risk_assessment:
+          type: string
+        fallback_plan:
+          type: string
+
+    Directive:
+      type: object
+      required: [from_player, to_character, instruction]
+      properties:
+        from_player:
+          type: string
+          description: Base persona agent ID
+        to_character:
+          type: string
+          description: Character agent ID
+        instruction:
+          type: string
+          description: High-level action to perform
+        tactical_guidance:
+          type: string
+          description: Optional specific approach
+        emotional_tone:
+          type: string
+          description: How character should feel
+
+    Action:
+      type: object
+      required: [character_id, action_text]
+      properties:
+        character_id:
+          type: string
+        action_text:
+          type: string
+          description: In-character action attempt (intent only, no outcomes)
+        dialogue:
+          type: string
+        mannerisms:
+          type: string
+          description: Physical actions, body language
+
+    Reaction:
+      type: object
+      required: [character_id, reaction_text]
+      properties:
+        character_id:
+          type: string
+        reaction_text:
+          type: string
+          description: In-character emotional response
+        dialogue:
+          type: string
+        next_intent:
+          type: string
+          description: What character wants to do next
+
+    CharacterState:
+      type: object
+      properties:
+        character_id:
+          type: string
+        current_location:
+          type: string
+        health_status:
+          type: string
+        emotional_state:
+          type: string
+        active_effects:
+          type: array
+          items:
+            type: string
+
+    EmotionalState:
+      type: object
+      properties:
+        primary_emotion:
+          type: string
+          enum: [joy, anger, fear, sadness, disgust, surprise, neutral]
+        intensity:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        secondary_emotions:
+          type: array
+          items:
+            type: string
+
+interfaces:
+  BasePersonaAgent:
+    description: Strategic decision-making agent (player layer)
+    methods:
+      participate_in_ooc_discussion:
+        description: Contribute to out-of-character strategy discussion
+        input:
+          type: object
+          required: [dm_narration, other_messages]
+          properties:
+            dm_narration:
+              type: string
+              description: Current scene from DM
+            other_messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+              description: Other players' OOC messages
+        output:
+          $ref: '#/components/schemas/Message'
+        errors:
+          - LLMCallFailed: When OpenAI API call fails after retries
+          - InvalidMessageFormat: When generated message doesn't match schema
+        behavior:
+          - MUST retrieve relevant memories before generating response
+          - MUST apply personality traits to decision-making
+          - SHOULD reference past experiences in reasoning
+          - MUST NOT narrate in-character actions (player layer only)
+
+      formulate_strategic_intent:
+        description: Decide high-level strategic goal from OOC discussion
+        input:
+          type: object
+          required: [discussion_summary]
+          properties:
+            discussion_summary:
+              type: string
+              description: Consensus from OOC discussion
+        output:
+          $ref: '#/components/schemas/Intent'
+        errors:
+          - NoConsensusReached: When discussion lacks clear direction
+          - LLMCallFailed: When OpenAI API call fails
+        behavior:
+          - MUST synthesize discussion into actionable intent
+          - MUST include risk assessment
+          - SHOULD provide fallback plan
+          - MUST align with agent personality traits
+
+      create_character_directive:
+        description: Issue high-level instruction to character agent
+        input:
+          type: object
+          required: [intent, character_state]
+          properties:
+            intent:
+              $ref: '#/components/schemas/Intent'
+            character_state:
+              $ref: '#/components/schemas/CharacterState'
+        output:
+          $ref: '#/components/schemas/Directive'
+        errors:
+          - CharacterNotFound: When character_id doesn't exist
+          - InvalidCharacterState: When state is corrupted
+        behavior:
+          - MUST translate strategic intent into actionable directive
+          - SHOULD consider character's current emotional/physical state
+          - MUST NOT dictate exact dialogue or mannerisms
+          - SHOULD provide emotional tone guidance
+
+  CharacterAgent:
+    description: In-character roleplay performer (character layer)
+    methods:
+      perform_action:
+        description: Execute in-character action based on player directive
+        input:
+          type: object
+          required: [directive, scene_context]
+          properties:
+            directive:
+              $ref: '#/components/schemas/Directive'
+            scene_context:
+              type: string
+              description: Current scene from DM
+        output:
+          $ref: '#/components/schemas/Action'
+        errors:
+          - ValidationFailed: When action contains narrative overreach
+          - LLMCallFailed: When OpenAI API call fails
+          - MaxRetriesExceeded: When validation fails 3 times
+        behavior:
+          - MUST express intent only, never narrate outcomes
+          - MUST interpret directive through character personality
+          - MUST use character speech patterns and mannerisms
+          - MUST NOT use forbidden language (successfully, kills, hits, etc.)
+          - SHOULD add character flavor to directive execution
+
+      react_to_outcome:
+        description: Respond in-character to DM's outcome narration
+        input:
+          type: object
+          required: [dm_narration, emotional_state]
+          properties:
+            dm_narration:
+              type: string
+              description: DM's outcome description
+            emotional_state:
+              $ref: '#/components/schemas/EmotionalState'
+        output:
+          $ref: '#/components/schemas/Reaction'
+        errors:
+          - LLMCallFailed: When OpenAI API call fails
+        behavior:
+          - MUST respond with character voice
+          - MUST reflect emotional state in response
+          - SHOULD indicate next desired action if relevant
+          - MUST NOT initiate new actions (reaction only)
+
+contract_tests:
+  BasePersonaAgent:
+    - name: test_ooc_discussion_retrieves_memories
+      description: Verify agent queries memory before participating
+      given: DM narration mentions "merchant"
+      when: participate_in_ooc_discussion called
+      then:
+        - Memory query executed for "merchant"
+        - Retrieved memories included in LLM context
+
+    - name: test_ooc_respects_personality
+      description: Verify personality traits affect decision
+      given: Agent has risk_tolerance=0.2 (cautious)
+      when: Discussion proposes risky infiltration
+      then:
+        - Response expresses concern about risks
+        - Suggests safer alternative
+
+    - name: test_directive_maintains_abstraction
+      description: Verify directive doesn't dictate exact execution
+      given: Intent is "intimidate guard"
+      when: create_character_directive called
+      then:
+        - Directive specifies goal ("intimidate")
+        - Directive does NOT specify exact words or gestures
+
+  CharacterAgent:
+    - name: test_action_intent_only
+      description: Verify action expresses intent without outcomes
+      given: Directive "attack the goblin"
+      when: perform_action called
+      then:
+        - Action contains "attempt", "try", or similar
+        - Action does NOT contain "hits", "kills", "successfully"
+
+    - name: test_action_uses_character_voice
+      description: Verify character personality in action
+      given: Character has speech_pattern="uses 'lad' frequently"
+      when: perform_action called with dialogue
+      then:
+        - Generated dialogue includes "lad"
+
+    - name: test_reaction_no_new_actions
+      description: Verify reaction doesn't initiate actions
+      given: DM narrates "the goblin falls"
+      when: react_to_outcome called
+      then:
+        - Reaction expresses emotion/response
+        - Reaction does NOT declare new action
+
+integration_requirements:
+  BasePersonaAgent:
+    - Must integrate with CorruptedTemporalMemory for memory retrieval
+    - Must use OpenAI GPT-4o with temperature=0.7
+    - Must execute in RQ worker queue "base_persona"
+    - Must publish messages to Redis message channels
+
+  CharacterAgent:
+    - Must integrate with ActionValidator for validation
+    - Must use OpenAI GPT-4o with temperature=0.8
+    - Must execute in RQ worker queue "character"
+    - Must retry up to 3 times on validation failure

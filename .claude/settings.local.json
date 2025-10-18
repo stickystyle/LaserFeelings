@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json \"# Product Requirements Document: AI TTRPG Player System\n\n**Version:** 1.0  \n**Date:** October 18, 2025  \n**Project Type:** Research/Hobby  \n**Author:** [Your Name]\n\n---\n\n## Executive Summary\n\nThis document defines requirements for a multi-agent AI system where AI agents play as realistic tabletop RPG players in a game run by a human Dungeon Master. The system''s core innovation is a dual-layer architecture that separates strategic decision-making (the \"\"player\"\") from in-character roleplay (the \"\"character\"\"), mimicking how real people play TTRPGs. The primary goal is to observe emergent social behaviors and party dynamics that arise when multiple AI agents interact over extended gameplay sessions.\" --short-name \"ai-ttrpg-players\")",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --json \"AI TTRPG Player System with dual-layer architecture\" --short-name ai-ttrpg-players)",
+      "Bash(.specify/scripts/bash/create-new-feature.sh --short-name ai-ttrpg-players --json \"AI TTRPG Player System with dual-layer architecture\")",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --paths-only)",
+      "Bash(.specify/scripts/bash/setup-plan.sh --json)",
+      "Bash(.specify/scripts/bash/update-agent-context.sh claude)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,457 @@
+# Orchestrator Interface Contracts
+
+openapi: 3.0.0
+info:
+  title: Turn Orchestration Interfaces
+  version: 1.0.0
+  description: Contract specifications for LangGraph orchestrator, message router, and consensus detector
+
+components:
+  schemas:
+    GameState:
+      type: object
+      description: Complete game state (see data-model.md for full schema)
+      required: [session_number, turn_number, current_phase, days_elapsed, current_timestamp]
+
+    TurnResult:
+      type: object
+      required: [turn_number, phase_completed, success]
+      properties:
+        turn_number:
+          type: integer
+        phase_completed:
+          type: string
+        success:
+          type: boolean
+        character_actions:
+          type: object
+          additionalProperties:
+            type: string
+        validation_warnings:
+          type: array
+          items:
+            type: object
+        consensus_state:
+          type: string
+          enum: [unanimous, majority, conflicted, timeout]
+        dm_awaiting_input:
+          type: boolean
+
+    DMCommand:
+      type: object
+      required: [command_type]
+      properties:
+        command_type:
+          type: string
+          enum: [narrate, roll, success, fail, ask, end_session]
+        text:
+          type: string
+        dice_roll:
+          type: object
+        dc:
+          type: integer
+
+    PhaseTransitionError:
+      type: object
+      properties:
+        current_phase:
+          type: string
+        attempted_transition:
+          type: string
+        error_message:
+          type: string
+
+interfaces:
+  TtrpgOrchestrator:
+    description: LangGraph state machine for turn-based coordination
+    methods:
+      execute_turn_cycle:
+        description: Execute complete turn from DM input to result
+        input:
+          type: object
+          required: [dm_input]
+          properties:
+            dm_input:
+              type: string
+              description: DM command text
+        output:
+          $ref: '#/components/schemas/TurnResult'
+        errors:
+          - InvalidCommand: When DM input doesn't parse
+          - PhaseTransitionFailed: When state machine cannot proceed
+          - AgentExecutionFailed: When agent RQ job times out
+          - MaxRetriesExceeded: When validation fails 3 times for all agents
+        behavior:
+          - MUST parse DM command
+          - MUST validate current phase allows this command
+          - MUST execute phase sequence via LangGraph
+          - MUST dispatch agent jobs to RQ queues
+          - MUST wait for all agent completions before proceeding
+          - MUST handle phase rollback on failure
+          - MUST checkpoint state after each phase
+          - SHOULD complete within 20s for normal turn
+
+      transition_to_phase:
+        description: Explicit phase transition (internal, called by graph)
+        input:
+          type: object
+          required: [phase]
+          properties:
+            phase:
+              type: string
+              enum: [session_start, dm_narration, memory_retrieval, ooc_discussion, strategic_intent, p2c_directive, character_action, validation_check, dm_adjudication, dice_resolution, dm_outcome, character_reaction, memory_consolidation, session_end]
+        output:
+          type: object
+          properties:
+            success:
+              type: boolean
+            previous_phase:
+              type: string
+            new_phase:
+              type: string
+        errors:
+          - InvalidPhaseTransition: When transition not allowed
+        behavior:
+          - MUST validate transition is legal from current phase
+          - MUST update GameState.current_phase
+          - MUST checkpoint state
+          - SHOULD log transition for observability
+
+      rollback_to_phase:
+        description: Rollback state machine to previous stable phase
+        input:
+          type: object
+          required: [target_phase]
+          properties:
+            target_phase:
+              type: string
+            error_context:
+              type: string
+        output:
+          type: object
+          properties:
+            success:
+              type: boolean
+            rolled_back_from:
+              type: string
+            rolled_back_to:
+              type: string
+        errors:
+          - CheckpointNotFound: When no checkpoint exists for target phase
+        behavior:
+          - MUST restore GameState from checkpoint
+          - MUST clear partial results from failed phase
+          - MUST log rollback reason
+          - SHOULD notify DM of rollback
+
+      validate_phase_action:
+        description: Check if action is allowed in current phase
+        input:
+          type: object
+          required: [agent_id, action_type, current_phase]
+          properties:
+            agent_id:
+              type: string
+            action_type:
+              type: string
+            current_phase:
+              type: string
+        output:
+          type: object
+          properties:
+            allowed:
+              type: boolean
+            reason:
+              type: string
+        errors: []
+        behavior:
+          - MUST enforce phase-based permissions
+          - MUST prevent characters from acting in OOC phase
+          - MUST prevent base personas from acting in IC phase
+
+  MessageRouter:
+    description: Three-channel message routing with visibility enforcement
+    methods:
+      route_message:
+        description: Route message to appropriate channels
+        input:
+          type: object
+          required: [message]
+          properties:
+            message:
+              type: object
+              description: Message object with channel specified
+        output:
+          type: object
+          properties:
+            success:
+              type: boolean
+            recipients_count:
+              type: integer
+        errors:
+          - InvalidChannel: When channel not recognized
+          - RecipientNotFound: When to_agents contains invalid ID
+        behavior:
+          - MUST enforce channel visibility rules
+          - IC → all characters see, base personas get summary
+          - OOC → only base personas see
+          - P2C → only target character sees
+          - MUST store messages in Redis Lists by channel
+          - MUST apply TTL to prevent unbounded growth
+
+      get_messages_for_agent:
+        description: Retrieve messages visible to specific agent
+        input:
+          type: object
+          required: [agent_id, agent_type]
+          properties:
+            agent_id:
+              type: string
+            agent_type:
+              type: string
+              enum: [base_persona, character]
+            limit:
+              type: integer
+              default: 50
+        output:
+          type: object
+          properties:
+            messages:
+              type: array
+              items:
+                type: object
+        errors:
+          - AgentNotFound: When agent_id invalid
+        behavior:
+          - MUST filter by channel visibility rules
+          - MUST return only messages agent can see
+          - MUST sort by timestamp
+          - SHOULD limit to recent messages
+
+  ConsensusDetector:
+    description: LLM-based multi-agent consensus detection
+    methods:
+      detect_consensus:
+        description: Analyze OOC discussion for agreement state
+        input:
+          type: object
+          required: [messages, agents]
+          properties:
+            messages:
+              type: array
+              items:
+                type: object
+            agents:
+              type: array
+              items:
+                type: string
+            max_rounds:
+              type: integer
+              default: 5
+            timeout_seconds:
+              type: integer
+              default: 120
+        output:
+          type: object
+          required: [state, positions, proceed_with_action]
+          properties:
+            state:
+              type: string
+              enum: [unanimous, majority, conflicted, timeout]
+            positions:
+              type: object
+              description: Each agent's stance
+            rounds_elapsed:
+              type: integer
+            time_elapsed_seconds:
+              type: number
+            proceed_with_action:
+              type: boolean
+            dissenting_agents:
+              type: array
+              items:
+                type: string
+        errors:
+          - LLMCallFailed: When stance classification fails
+          - InvalidAgentList: When agents list empty
+        behavior:
+          - MUST use LLM to classify each agent's stance
+          - MUST detect unanimous (all AGREE)
+          - MUST detect majority (>50% AGREE, no DISAGREE)
+          - MUST detect conflicted (any DISAGREE)
+          - MUST detect timeout (>5 rounds OR >120 seconds)
+          - SHOULD be lenient with AGREE detection
+          - SHOULD be strict with DISAGREE detection
+
+      extract_positions:
+        description: Use LLM to classify agent stances
+        input:
+          type: object
+          required: [messages, agents]
+          properties:
+            messages:
+              type: array
+              items:
+                type: object
+            agents:
+              type: array
+              items:
+                type: string
+        output:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              agent_id:
+                type: string
+              stance:
+                type: string
+                enum: [agree, disagree, neutral, silent]
+              confidence:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+        errors:
+          - LLMCallFailed: When OpenAI API fails
+        behavior:
+          - MUST use GPT-4o-mini with JSON mode
+          - MUST analyze last 3 messages per agent
+          - MUST return stance for every agent
+          - SHOULD use temperature=0.3 for determinism
+
+contract_tests:
+  TtrpgOrchestrator:
+    - name: test_execute_turn_cycle_success
+      description: Verify complete turn executes successfully
+      given:
+        - Game in DM_NARRATION phase
+        - 3 active agents
+      when: execute_turn_cycle("narrate A goblin appears") called
+      then:
+        - All phases execute in sequence
+        - All agent jobs complete
+        - TurnResult.success = true
+        - State checkpointed after each phase
+
+    - name: test_phase_transition_validation
+      description: Verify illegal transitions rejected
+      given: Game in CHARACTER_ACTION phase
+      when: transition_to_phase(OOC_DISCUSSION) called
+      then:
+        - InvalidPhaseTransition error raised
+        - Phase remains CHARACTER_ACTION
+
+    - name: test_rollback_on_agent_failure
+      description: Verify rollback when agent job times out
+      given:
+        - Game in CHARACTER_ACTION phase
+        - Agent job times out after 30s
+      when: execute_turn_cycle continues
+      then:
+        - rollback_to_phase(P2C_DIRECTIVE) called
+        - State restored from checkpoint
+        - Retry attempted once
+        - DM notified if retry fails
+
+  MessageRouter:
+    - name: test_ic_visibility_filtering
+      description: Verify IC messages visible to characters, summary to players
+      given: IC message "Thrain charges the goblin"
+      when: route_message() called
+      then:
+        - All characters receive full message
+        - Base personas receive summarized version
+        - Message stored in channel:ic:messages
+
+    - name: test_ooc_isolation
+      description: Verify OOC messages not visible to characters
+      given: OOC message "Let's flank from the left"
+      when: route_message() called
+      then:
+        - Only base personas receive message
+        - Characters do NOT receive message
+        - Message stored in channel:ooc:messages
+
+    - name: test_p2c_privacy
+      description: Verify P2C messages only reach target character
+      given: P2C message from agent_alex to char_thrain
+      when: route_message() called
+      then:
+        - char_thrain receives message
+        - Other characters do NOT receive
+        - agent_alex (sender) does NOT receive back
+        - Message stored in channel:p2c:char_thrain
+
+  ConsensusDetector:
+    - name: test_unanimous_detection
+      description: Verify all AGREE triggers unanimous
+      given:
+        - Agent A: "Yes, let's do it"
+        - Agent B: "I agree"
+        - Agent C: "Sounds good"
+      when: detect_consensus() called
+      then:
+        - state = "unanimous"
+        - proceed_with_action = true
+        - All positions.stance = AGREE
+
+    - name: test_majority_detection
+      description: Verify >50% AGREE with no DISAGREE triggers majority
+      given:
+        - Agent A: "Yes"
+        - Agent B: "Yes"
+        - Agent C: "Either way is fine" (NEUTRAL)
+      when: detect_consensus() called
+      then:
+        - state = "majority"
+        - proceed_with_action = true
+        - dissenting_agents = []
+
+    - name: test_conflicted_detection
+      description: Verify any DISAGREE triggers conflicted
+      given:
+        - Agent A: "Yes"
+        - Agent B: "No, bad idea"
+        - Agent C: "Yes"
+      when: detect_consensus() called
+      then:
+        - state = "conflicted"
+        - proceed_with_action = false
+        - dissenting_agents = ["agent_b"]
+
+    - name: test_timeout_enforcement
+      description: Verify timeout after 5 rounds
+      given:
+        - 15 messages (5 rounds for 3 agents)
+        - No consensus reached
+      when: detect_consensus() called
+      then:
+        - state = "timeout"
+        - proceed_with_action = true (force decision)
+        - rounds_elapsed = 5
+
+integration_requirements:
+  TtrpgOrchestrator:
+    - Must use LangGraph StateGraph for workflow
+    - Must use RQ for agent job dispatch
+    - Must use Redis for state checkpointing
+    - Must integrate with MessageRouter for IC/OOC/P2C routing
+    - Must integrate with ConsensusDetector for OOC phase
+    - Must trace all phases via LangSmith
+
+  MessageRouter:
+    - Must use Redis Lists for message storage
+    - Must apply 24-hour TTL to message channels
+    - Must enforce visibility rules architecturally (not trust agents)
+
+  ConsensusDetector:
+    - Must use OpenAI GPT-4o-mini for stance classification
+    - Must use JSON mode for structured output
+    - Must track both round count and wall-time for timeout
+
+performance_requirements:
+  - execute_turn_cycle MUST complete within 20s (normal case)
+  - Phase transitions MUST complete within 100ms
+  - Consensus detection MUST complete within 3s
+  - Message routing MUST complete within 50ms
+  - Rollback MUST complete within 500ms

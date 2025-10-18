@@ -1,0 +1,353 @@
+# Memory Interface Contracts
+
+openapi: 3.0.0
+info:
+  title: Memory System Interfaces
+  version: 1.0.0
+  description: Contract specifications for CorruptedTemporalMemory and Graphiti integration
+
+components:
+  schemas:
+    MemoryEdge:
+      type: object
+      required: [uuid, fact, valid_at, session_number, days_elapsed, memory_type, source_episode_id]
+      properties:
+        uuid:
+          type: string
+          format: uuid
+        fact:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        valid_at:
+          type: string
+          format: date-time
+        invalid_at:
+          type: string
+          format: date-time
+          nullable: true
+        session_number:
+          type: integer
+          minimum: 1
+        days_elapsed:
+          type: integer
+          minimum: 0
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        corruption_type:
+          type: string
+          enum: [detail_drift, emotional_coloring, conflation, simplification, false_confidence]
+          nullable: true
+        original_uuid:
+          type: string
+          format: uuid
+          nullable: true
+        importance:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        rehearsal_count:
+          type: integer
+          minimum: 0
+        emotional_weight:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        memory_type:
+          type: string
+          enum: [episodic, semantic, procedural]
+        source_episode_id:
+          type: string
+        related_entities:
+          type: array
+          items:
+            type: string
+
+    Episode:
+      type: object
+      required: [episode_id, session_number, messages, reference_time]
+      properties:
+        episode_id:
+          type: string
+        session_number:
+          type: integer
+          minimum: 1
+        messages:
+          type: array
+          items:
+            type: object
+        reference_time:
+          type: string
+          format: date-time
+        group_id:
+          type: string
+          description: agent_X for personal, campaign_main for shared
+
+interfaces:
+  CorruptedTemporalMemory:
+    description: Memory wrapper with corruption layer over Graphiti
+    methods:
+      search:
+        description: Query memories with optional corruption
+        input:
+          type: object
+          required: [query, agent_id]
+          properties:
+            query:
+              type: string
+              description: Semantic search query
+            agent_id:
+              type: string
+              description: Which agent's memories to search
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 50
+              default: 5
+            apply_corruption:
+              type: boolean
+              default: true
+              description: Whether to corrupt results
+        output:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryEdge'
+        errors:
+          - GraphitiConnectionFailed: When Neo4j connection fails
+          - InvalidAgentID: When agent_id not found
+          - LLMCallFailed: When corruption LLM call fails
+        behavior:
+          - MUST query Graphiti with group_id for agent
+          - MUST apply temporal filtering (valid_at/invalid_at)
+          - SHOULD calculate corruption probability per memory
+          - MUST use LLM for natural corruption when probability triggers
+          - MUST increment rehearsal_count on each query
+          - SHOULD order by importance and recency
+
+      add_episode:
+        description: Store new episode (game session) in memory
+        input:
+          type: object
+          required: [session_number, messages, reference_time]
+          properties:
+            session_number:
+              type: integer
+              minimum: 1
+            messages:
+              type: array
+              items:
+                type: object
+              description: All messages from session
+            reference_time:
+              type: string
+              format: date-time
+              description: In-game time when session occurred
+            group_id:
+              type: string
+              description: agent_X for personal, campaign_main for shared
+        output:
+          type: object
+          properties:
+            episode_id:
+              type: string
+        errors:
+          - GraphitiConnectionFailed: When Neo4j connection fails
+          - EpisodeCreationFailed: When Graphiti fails to create episode
+        behavior:
+          - MUST delegate to Graphiti.add_episode()
+          - MUST extract entities via Graphiti's LLM
+          - MUST create episodic subgraph for raw messages
+          - MUST create semantic subgraph for entities/relationships
+          - SHOULD mark high-importance events
+
+      invalidate_memory:
+        description: Mark memory as no longer valid
+        input:
+          type: object
+          required: [memory_uuid]
+          properties:
+            memory_uuid:
+              type: string
+              format: uuid
+            invalidation_time:
+              type: string
+              format: date-time
+              description: When memory became invalid (defaults to now)
+        output:
+          type: object
+          properties:
+            success:
+              type: boolean
+        errors:
+          - MemoryNotFound: When UUID doesn't exist
+          - AlreadyInvalidated: When memory already has invalid_at set
+        behavior:
+          - MUST set invalid_at timestamp
+          - MUST preserve original edge for debugging
+          - SHOULD not delete from database (soft delete)
+
+      get_corruption_stats:
+        description: Retrieve corruption analytics for agent
+        input:
+          type: object
+          required: [agent_id]
+          properties:
+            agent_id:
+              type: string
+        output:
+          type: object
+          properties:
+            total_memories:
+              type: integer
+            corrupted_memories:
+              type: integer
+            corruption_by_type:
+              type: object
+              additionalProperties:
+                type: integer
+            avg_confidence:
+              type: number
+        errors:
+          - InvalidAgentID: When agent not found
+        behavior:
+          - MUST query Neo4j for corruption metadata
+          - MUST group by corruption_type
+          - SHOULD calculate average confidence
+
+  GraphitiClient:
+    description: Direct Graphiti integration (wrapped by CorruptedTemporalMemory)
+    methods:
+      initialize:
+        description: Setup Graphiti with Neo4j connection
+        input:
+          type: object
+          required: [neo4j_uri, neo4j_user, neo4j_password]
+          properties:
+            neo4j_uri:
+              type: string
+              format: uri
+            neo4j_user:
+              type: string
+            neo4j_password:
+              type: string
+            llm_client:
+              type: object
+              description: OpenAI client for entity extraction
+        output:
+          type: object
+          properties:
+            success:
+              type: boolean
+            version:
+              type: string
+        errors:
+          - Neo4jConnectionFailed: When database unreachable
+          - AuthenticationFailed: When credentials invalid
+        behavior:
+          - MUST establish Neo4j connection
+          - MUST verify indexes exist (create if missing)
+          - MUST configure LLM client for entity extraction
+
+      create_indexes:
+        description: Create temporal and composite indexes in Neo4j
+        input:
+          type: object
+        output:
+          type: object
+          properties:
+            indexes_created:
+              type: array
+              items:
+                type: string
+        errors:
+          - IndexCreationFailed: When Cypher query fails
+        behavior:
+          - MUST create agent_session_temporal composite index
+          - MUST create valid_at and invalid_at range indexes
+          - MUST create fact full-text index
+          - MUST create corruption_type index
+
+contract_tests:
+  CorruptedTemporalMemory:
+    - name: test_search_applies_corruption
+      description: Verify corruption probability calculation works
+      given:
+        - Memory from 90 days ago
+        - Agent with detail_oriented=0.5
+        - global_strength=0.5
+      when: search() called with apply_corruption=true
+      then:
+        - Corruption probability calculated correctly (~25%)
+        - If corrupted, corruption_type selected based on personality
+        - Corrupted fact differs from original but plausible
+
+    - name: test_search_increments_rehearsal
+      description: Verify rehearsal_count updated on query
+      given: Memory with rehearsal_count=0
+      when: search() returns this memory
+      then: Memory rehearsal_count incremented to 1
+
+    - name: test_search_respects_temporal_validity
+      description: Verify invalidated memories not returned
+      given: Memory with invalid_at set to 10 days ago
+      when: search() called
+      then: Memory NOT included in results
+
+    - name: test_add_episode_creates_subgraphs
+      description: Verify Graphiti creates episodic and semantic subgraphs
+      given: Session with 20 messages mentioning "merchant Galvin"
+      when: add_episode() called
+      then:
+        - Episodic subgraph created with raw messages
+        - Semantic subgraph extracts "merchant Galvin" entity
+        - Relationships created between episode and entities
+
+    - name: test_corruption_preserves_original
+      description: Verify original memory preserved when corrupted
+      given: Memory "merchant offered 50 gold"
+      when: Corruption applied with detail_drift
+      then:
+        - New edge created with corrupted fact
+        - original_uuid points to original edge
+        - Original edge still queryable with apply_corruption=false
+
+  GraphitiClient:
+    - name: test_initialize_creates_indexes
+      description: Verify database setup on initialization
+      given: Fresh Neo4j database
+      when: initialize() called
+      then:
+        - agent_session_temporal index created
+        - valid_at and invalid_at indexes created
+        - fact full-text index created
+
+    - name: test_entity_extraction
+      description: Verify Graphiti extracts entities from episode
+      given: Episode with text "We met merchant Galvin at the tavern"
+      when: add_episode() called
+      then:
+        - Entity "Galvin" extracted
+        - Entity type "merchant" identified
+        - Location "tavern" extracted
+        - Relationships created
+
+integration_requirements:
+  CorruptedTemporalMemory:
+    - Must wrap Graphiti client as decorator
+    - Must use OpenAI GPT-4o-mini for corruption generation
+    - Must use Neo4j Python driver for direct corruption metadata queries
+    - Must cache frequently accessed memories in Redis (optional optimization)
+
+  GraphitiClient:
+    - Must use Neo4j 5.x official Python driver
+    - Must use OpenAI client for entity extraction
+    - Must handle connection pooling (10 min, 50 max)
+    - Must implement retry logic for transient failures
+
+performance_requirements:
+  - Memory search MUST complete within 500ms (P95)
+  - Corruption calculation MUST complete within 100ms
+  - Episode creation SHOULD complete within 2s for 50 messages
+  - Index queries MUST use composite indexes (verified with EXPLAIN)
