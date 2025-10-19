@@ -20,6 +20,14 @@
 - Q: At what token usage threshold should the system trigger context window compression? → A: Balanced: Trigger at 80% of token limit (reasonable safety margin)
 - Q: How should the DM create and configure AI player-character pairs at session start? → A: JSON configuration file: DM creates `characters.json` with all player/character attributes before starting
 
+### Session 2025-10-19
+
+- Q: How should AI player personality traits (analytical score, risk tolerance, detail orientation, emotional memory, assertiveness, cooperativeness, openness, rule adherence, roleplay intensity) be numerically represented? → A: Normalized 0.0-1.0 floating point scale for all personality traits (standard ML approach, allows easy mathematical operations, integrates naturally with LLM prompt engineering)
+- Q: After 3 failed validation attempts, should the system auto-correct or flag for DM intervention, and how should auto-correction work? → A: Auto-correct by filtering forbidden outcome words (removes "kills", "successfully", etc.), flag for DM review if meaning becomes unclear after filtering
+- Q: What qualifies as a "critical event" that should trigger memory storage? → A: NPC introductions, combat outcomes, major party decisions, quest status changes (concrete, objectively detectable events with high retrieval value)
+- Q: What format should be used for logging agent interactions, phase transitions, validation failures, memory queries, and consensus outcomes? → A: Structured JSON logs with event_type, timestamp, session_id, turn_number, and event-specific fields (enables programmatic analysis, time-series research, filtering by event type)
+- Q: How should memory confidence scores be calculated and represented? → A: 0.0-1.0 score based on recency decay and source authority (DM narration = 1.0, player observations = 0.7-0.9 decaying with time, character interpretations = 0.5-0.7 decaying faster)
+
 ## Game System
 
 **Lasers & Feelings** is the core TTRPG system for this project. It is an extremely rules-light, one-page game designed by John Harper.
@@ -116,7 +124,7 @@ As a human Dungeon Master, I want the system to detect and prevent AI players fr
 
 1. **Given** AI player generates response containing outcome language (e.g., "I strike the goblin and kill it"), **When** system validates the response, **Then** system detects the violation, provides feedback, and requests a retry expressing intent only
 2. **Given** AI player fails validation on second attempt, **When** third attempt is made, **Then** system provides stronger warning about expressing intent only
-3. **Given** AI player fails validation after 3 attempts, **When** final attempt fails, **Then** system either auto-fixes by removing forbidden language or flags for DM manual review
+3. **Given** AI player fails validation after 3 attempts, **When** final attempt fails, **Then** system auto-corrects by filtering forbidden outcome words (kills, successfully, strikes, etc.), or flags for DM manual review if filtered result is unclear
 4. **Given** AI player successfully expresses intent without outcomes, **When** validation runs, **Then** validation passes and turn proceeds to DM adjudication phase
 
 ---
@@ -191,7 +199,7 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 
 ### Edge Cases
 
-- What happens when AI player repeatedly fails validation after 3 retry attempts? (System must auto-correct or flag for DM intervention without breaking game flow)
+- What happens when AI player repeatedly fails validation after 3 retry attempts? (System auto-corrects by filtering forbidden outcome words; if filtered result is unclear or broken, flags for DM manual review instead)
 - How does system handle memory queries that return no results? (System should indicate no prior knowledge exists rather than inventing false information)
 - What happens when multiple AI players reach stalemate with no consensus? (System must timeout and force decision by vote after reasonable discussion period - 5 rounds or 2 minutes)
 - How does system handle AI player disconnection or phase failure mid-turn? (System rolls back to last stable phase, retries once, then flags for DM intervention if retry fails)
@@ -209,10 +217,10 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 - **FR-001a**: System MUST load AI player-character configurations from a `characters.json` file at session start, containing all required attributes (name, style, role, number, goals, equipment, player personality traits)
 - **FR-002**: System MUST enforce strict turn phase sequencing: DM Narration → Memory Query → Strategic Intent → Character Action → Validation → DM Adjudication → Dice Resolution (auto-rolled with DM override option) → DM Outcome → Character Reaction → Memory Storage. If a phase fails or times out, system MUST rollback to the last stable phase, retry once, and flag for DM intervention if retry fails
 - **FR-003**: System MUST detect when AI generates outcome language (kills, hits, successfully, manages to, strikes, "The X falls", future narration) and prevent it from reaching DM
-- **FR-004**: System MUST retry failed validation responses up to 3 times with progressively stricter prompting before triggering fallback (auto-correct or DM flag)
-- **FR-005**: System MUST store game events, character relationships, and strategic decisions in persistent memory at: every 10 turns, scene completion, critical events, and session end
+- **FR-004**: System MUST retry failed validation responses up to 3 times with progressively stricter prompting. After 3 failures, system MUST auto-correct by filtering forbidden outcome words (kills, hits, successfully, manages to, strikes, falls, dies, defeats, wins, etc.). If filtered result is unclear or grammatically broken, system MUST flag for DM manual review instead
+- **FR-005**: System MUST store game events, character relationships, and strategic decisions in persistent memory at: every 10 turns, scene completion, critical events (NPC introductions, combat outcomes, major party decisions, quest status changes), and session end
 - **FR-006**: System MUST retrieve relevant memories at: session start, strategic decision points, context window full, and explicit player queries
-- **FR-007**: System MUST support memory queries like "What do we know about [NPC/location/event]?" and return facts with confidence scores, temporal context, and source information
+- **FR-007**: System MUST support memory queries like "What do we know about [NPC/location/event]?" and return facts with confidence scores (0.0-1.0 calculated from recency decay and source authority: DM narration = 1.0, player observations = 0.7-0.9 decaying with time, character interpretations = 0.5-0.7 decaying faster), temporal context, and source information
 - **FR-008**: System MUST maintain separate knowledge stores for player layer (strategic knowledge) and character layer (in-character knowledge) for each AI
 - **FR-009**: System MUST allow DM to provide information to player layer only, character layer only, or both, with enforcement that characters cannot use player-only knowledge
 - **FR-010**: System SHOULD complete turn execution within 10 seconds (P95) when LLM APIs are responsive, but timing is not critical for MVP (research focus allows flexible pacing beyond this target)
@@ -229,7 +237,7 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 - **FR-018**: System MUST maintain shared party memory layer containing group consensus facts, shared experiences, and party culture, separate from personal memories
 - **FR-019**: System MUST distinguish personal memories (per AI) from shared memories (party-wide) and handle conflicting memories using precedence rules: DM narration (canonical truth) > player layer memory > character layer memory. System MUST log all detected conflicts with source attribution for researcher review.
 - **FR-020**: System MUST allow multiple players to discuss simultaneously (asynchronously) and multiple characters to declare actions in parallel
-- **FR-021**: System MUST log all agent interactions, phase transitions, validation failures, memory queries, and consensus outcomes for research analysis
+- **FR-021**: System MUST log all agent interactions, phase transitions, validation failures, memory queries, and consensus outcomes as structured JSON entries containing: event_type, timestamp (ISO 8601), session_id, turn_number, and event-specific fields. Logs must be appendable and support filtering by event type for research analysis
 
 **Observability & Research Requirements:**
 
@@ -240,11 +248,11 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 
 ### Key Entities
 
-- **AI Player (Base Persona)**: Strategic decision-maker operating out-of-character. Has personality traits (analytical score, risk tolerance, detail orientation, emotional memory, assertiveness, cooperativeness, openness, rule adherence, roleplay intensity). Makes high-level strategic decisions, discusses with other players, provides directives to their character.
+- **AI Player (Base Persona)**: Strategic decision-maker operating out-of-character. Has personality traits represented as normalized floating-point values (0.0-1.0 scale): analytical score, risk tolerance, detail orientation, emotional memory, assertiveness, cooperativeness, openness, rule adherence, roleplay intensity. Makes high-level strategic decisions, discusses with other players, provides directives to their character.
 
 - **AI Character (Performer)**: In-character roleplay performer. Has in-game personality (class, background, bonds, ideals, flaws, speech patterns, mannerisms). Receives directives from player layer, interprets through personality lens, performs roleplay expressing intent only, never narrates outcomes.
 
-- **Memory**: Persistent knowledge stored across sessions. Types include: Episodic (session-based conversation threads and events with temporal context), Semantic (NPC personalities, world facts, quest status, party norms), Procedural (combat strategies, negotiation patterns, coordination tactics). Contains confidence scores, temporal context, source attribution, and relationship information.
+- **Memory**: Persistent knowledge stored across sessions. Types include: Episodic (session-based conversation threads and events with temporal context), Semantic (NPC personalities, world facts, quest status, party norms), Procedural (combat strategies, negotiation patterns, coordination tactics). Contains confidence scores (0.0-1.0 based on recency decay and source authority: DM narration = 1.0, player observations = 0.7-0.9 decaying over time, character interpretations = 0.5-0.7 decaying faster), temporal context, source attribution, and relationship information.
 
 - **Turn Phase**: Discrete step in turn-based gameplay cycle. Enforces strict sequencing to prevent chaos and ensure DM authority. Phases must be atomic (complete or rollback to maintain state consistency). On failure or timeout, system rolls back to last stable phase, retries once, then flags for DM intervention if retry fails.
 
@@ -277,7 +285,7 @@ As a human Dungeon Master, I want each AI character to interpret high-level stra
 
 **Research & Quality:**
 
-- **SC-012**: System logs 100% of phase transitions, agent interactions, and validation failures without missing data points for research analysis
+- **SC-012**: System logs 100% of phase transitions, agent interactions, and validation failures as structured JSON entries without missing data points, enabling programmatic research analysis
 - **SC-013**: Memory retrieval returns accurate, relevant results consistently without performance degradation as memory store grows
 - **SC-014**: Validation retry mechanism succeeds in correcting narrative overreach within 3 attempts for 90% of violations
 - **SC-015**: DM can operate the system without technical knowledge, with intuitive commands and helpful error messages (validated through usability testing with target DM)

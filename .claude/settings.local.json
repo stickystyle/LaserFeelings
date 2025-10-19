@@ -7,7 +7,16 @@
       "Bash(.specify/scripts/bash/check-prerequisites.sh --json --paths-only)",
       "Bash(.specify/scripts/bash/setup-plan.sh --json)",
       "Bash(.specify/scripts/bash/update-agent-context.sh claude)",
-      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)"
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
+      "Bash(git rev-parse --git-dir)",
+      "WebSearch",
+      "WebFetch(domain:langchain-ai.github.io)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:cookbook.openai.com)",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:neo4j.com)",
+      "WebFetch(domain:python-rq.org)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json)"
     ],
     "deny": [],
     "ask": []

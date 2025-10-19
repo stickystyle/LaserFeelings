@@ -1,0 +1,661 @@
+# LangGraph Node Contract: Validation (Narrative Overreach Detection)
+# Purpose: Detect and prevent AI players from narrating action outcomes
+# Phase: validation in turn cycle
+# Requirements: FR-003, FR-004, FR-011
+
+node_name: validation_node
+description: |
+  The Validation Node enforces the critical constraint that AI characters
+  express INTENT ONLY, never narrating outcomes. This preserves DM authority
+  over story consequences. Uses hybrid approach: fast pattern matching +
+  semantic LLM validation for context-aware detection.
+
+  Implements progressive retry logic: up to 3 attempts with increasingly
+  strict prompting before fallback (auto-correct or DM flag).
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    # Phase tracking
+    current_phase:
+      type: Literal["validation"]
+      required: true
+      description: Must be "validation" when this node executes
+
+    turn_number:
+      type: int
+      required: true
+
+    # Character action to validate
+    character_actions:
+      type: dict[str, str]
+      required: true
+      description: Map of character_id to action description
+      validation:
+        must_contain_character_id: true
+
+    # Validation state
+    validation_attempt:
+      type: int
+      required: true
+      minimum: 1
+      maximum: 3
+      description: Current validation attempt (1 = first check)
+
+    previous_validation_failure:
+      type: Optional[str]
+      required: false
+      default: null
+      description: Violation message from previous attempt (if retry)
+
+    # Context for validation
+    dm_narration:
+      type: str
+      required: true
+      description: Scene context for semantic validation
+
+    strategic_intents:
+      type: dict[str, str]
+      required: true
+      description: Strategic directives for context
+
+  # Character configuration (for context)
+  character_config:
+    character_id:
+      type: str
+      required: true
+      pattern: "^char_[a-z0-9_]+$"
+
+    name:
+      type: str
+      required: true
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    # Validation results
+    validation_valid:
+      type: bool
+      required: true
+      description: Whether action passes validation
+
+    validation_failures:
+      type: dict[str, list[str]]
+      required: true
+      description: |
+        Map of character_id to list of violation messages.
+        Empty if validation_valid=True.
+      example:
+        char_zara_001:
+          - "Contains forbidden outcome language: 'kills'"
+          - "Narrates result: 'the goblin falls'"
+
+    validation_attempt:
+      type: int
+      required: true
+      description: Incremented attempt counter
+
+    previous_validation_failure:
+      type: Optional[str]
+      required: true
+      description: |
+        Latest violation message to pass to retry.
+        Null if valid, or comma-joined violations if invalid.
+
+    # Suggested correction (for retry)
+    validation_suggestion:
+      type: Optional[str]
+      required: false
+      default: null
+      description: |
+        Specific suggestion for fixing violation.
+        Used in retry prompt.
+      example: "Remove the phrase 'and kill it' and end with 'I swing my sword at the goblin'"
+
+    # Phase progression (determined by conditional edge)
+    current_phase:
+      type: Literal["character_action", "dm_adjudication", "error"]
+      required: true
+      description: |
+        Next phase routing:
+        - "character_action" if invalid and retry available
+        - "dm_adjudication" if valid or max retries exceeded
+        - "error" if validation system fails
+
+    # Error handling
+    error_state:
+      type: Optional[str]
+      required: false
+      default: null
+
+# --- PRECONDITIONS ---
+preconditions:
+  - condition: state["current_phase"] == "validation"
+    description: Must execute during validation phase
+
+  - condition: character_id in state["character_actions"]
+    description: Character action must exist
+
+  - condition: 1 <= state["validation_attempt"] <= 3
+    description: Validation attempt must be in valid range
+
+  - condition: |
+      # If retry (attempt > 1), must have previous failure message
+      state["validation_attempt"] == 1 or
+      state.get("previous_validation_failure") is not None
+    description: Retry attempts require failure context
+
+# --- POSTCONDITIONS ---
+postconditions:
+  - condition: state["validation_valid"] in [True, False]
+    description: Validation result must be boolean
+
+  - condition: |
+      # If invalid, must have failure messages
+      not state["validation_valid"] implies len(state["validation_failures"][character_id]) > 0
+    description: Invalid actions must include violation details
+
+  - condition: |
+      # If valid, no failures
+      state["validation_valid"] implies len(state["validation_failures"].get(character_id, [])) == 0
+    description: Valid actions have no violations
+
+  - condition: state["current_phase"] in ["character_action", "dm_adjudication", "error"]
+    description: Must transition to valid next phase
+
+  - condition: |
+      # If max retries exceeded, must proceed to DM
+      state["validation_attempt"] >= 3 implies state["current_phase"] == "dm_adjudication"
+    description: Max retries forces progression to DM adjudication
+
+# --- ERROR CONDITIONS ---
+error_conditions:
+  llm_validation_failure:
+    detection: LLM validation call raises exception
+    action: fallback_to_pattern_only_validation
+    description: |
+      If semantic LLM validation fails, use only pattern matching.
+      Less accurate but ensures validation completes.
+
+  pattern_validation_false_positive:
+    detection: |
+      Pattern matching flags valid action
+      (e.g., "I aim my strikes at the target" contains "strikes" but valid)
+    mitigation: semantic_llm_overrides_pattern
+    description: |
+      LLM semantic check has final say. Pattern matching is first pass
+      for speed, but LLM can override false positives.
+
+  validation_timeout:
+    detection: Validation exceeds 5 seconds
+    action: default_to_invalid_and_retry
+    description: |
+      If validation cannot complete in reasonable time, assume invalid
+      and trigger retry with stricter prompt.
+
+  stuck_in_retry_loop:
+    detection: Same violation appears 3 times consecutively
+    action: auto_correct_and_proceed
+    description: |
+      If character agent cannot fix violation after 3 attempts,
+      apply automatic correction and flag for researcher review.
+
+# --- VALIDATION ALGORITHM ---
+validation_algorithm:
+  step_1_pattern_matching:
+    description: Fast deterministic check for forbidden patterns
+    forbidden_patterns:
+      - pattern: '\bsuccessfully\b'
+        violation_message: "Contains forbidden word: 'successfully'"
+        case_insensitive: true
+
+      - pattern: '\bmanages? to\b'
+        violation_message: "Contains forbidden phrase: 'manages to'"
+        case_insensitive: true
+
+      - pattern: '\bkills?\b'
+        violation_message: "Contains outcome verb: 'kills'"
+        case_insensitive: true
+
+      - pattern: '\bhits?\b'
+        violation_message: "Contains outcome verb: 'hits'"
+        case_insensitive: true
+        exception: "hits? the button|hits? the switch"  # Acceptable context
+
+      - pattern: '\bstrikes?\b'
+        violation_message: "Contains outcome verb: 'strikes'"
+        case_insensitive: true
+        exception: "aim.* strikes?|targets? .* strikes?"  # "I aim strikes" is valid
+
+      - pattern: '\bdefeats?\b'
+        violation_message: "Contains outcome verb: 'defeats'"
+        case_insensitive: true
+
+      - pattern: '\bthe .+ (falls?|dies?|collapses?)\b'
+        violation_message: "Narrates entity outcome: 'the [entity] falls/dies/collapses'"
+        case_insensitive: true
+
+      - pattern: '\b(he|she|it|they) (die|dies|falls?|collapses?)\b'
+        violation_message: "Narrates pronoun outcome: 'he/she/it/they dies/falls/collapses'"
+        case_insensitive: true
+
+      - pattern: '\b(my|the) .+ (works?|succeeds?)\b'
+        violation_message: "Assumes success: 'my/the [action] works/succeeds'"
+        case_insensitive: true
+
+    outcome: |
+      If ANY pattern matches (excluding exceptions), set valid=False.
+      Collect all violation messages.
+
+  step_2_semantic_validation:
+    description: LLM-based context-aware check
+    trigger: |
+      Run if:
+      - Pattern matching found no violations (confirm valid), OR
+      - Attempt >= 2 (stricter semantic check on retries)
+
+    llm_prompt: |
+      You are validating a TTRPG character action for narrative overreach.
+
+      ACTION: "{action}"
+
+      SCENE CONTEXT: {dm_narration}
+      STRATEGIC DIRECTIVE: {strategic_intent}
+
+      RULES:
+      1. Character describes INTENT or ATTEMPT only
+      2. Character does NOT narrate outcomes, success, or results
+      3. Future consequences are the DM's domain, not the character's
+
+      EXAMPLES:
+      VALID: "I swing my sword at the goblin's chest"
+      VALID: "I attempt to hack the security terminal"
+      VALID: "I fire my blaster at the enemy ship"
+      INVALID: "I kill the goblin" (outcome)
+      INVALID: "My sword strikes the goblin" (assumes hit)
+      INVALID: "I successfully hack the terminal" (assumes success)
+
+      Analyze the action. Return JSON:
+      {{
+        "valid": boolean,
+        "violations": [list of specific violations, empty if valid],
+        "reasoning": "brief explanation",
+        "suggestion": "how to fix (if invalid)"
+      }}
+
+      Strictness level: {"lenient" if attempt == 1 else "strict" if attempt == 2 else "EXTREMELY strict"}
+
+    model: gpt-4o-mini-2024-07-18
+    temperature: 0.2  # Deterministic validation
+    response_format: json_object
+
+  step_3_combine_results:
+    description: Final validation decision
+    logic: |
+      if pattern_violations:
+          # Pattern match found violations
+          if semantic_validation_available:
+              # LLM can override false positives
+              if semantic_says_valid:
+                  valid = True  # Override pattern false positive
+                  violations = []
+              else:
+                  valid = False
+                  violations = pattern_violations + semantic_violations
+          else:
+              # Pattern only
+              valid = False
+              violations = pattern_violations
+      else:
+          # No pattern violations
+          if semantic_validation_available:
+              valid = semantic_says_valid
+              violations = semantic_violations
+          else:
+              # Pattern passed, no semantic check needed
+              valid = True
+              violations = []
+
+# --- RETRY LOGIC ---
+retry_logic:
+  decision_tree:
+    - condition: validation_valid == True
+      action: proceed_to_dm_adjudication
+      next_phase: dm_adjudication
+
+    - condition: validation_valid == False and validation_attempt < 3
+      action: retry_character_action_with_stricter_prompt
+      next_phase: character_action
+      updates:
+        - previous_validation_failure: comma-joined violation messages
+        - validation_attempt: increment by 1
+
+    - condition: validation_valid == False and validation_attempt >= 3
+      action: max_retries_exceeded_proceed_with_warning
+      next_phase: dm_adjudication
+      updates:
+        - error_state: "validation_failed_after_3_attempts"
+        - dm_flag: "VALIDATION WARNING: Action may contain outcome language"
+
+  auto_correction:
+    trigger: validation_attempt >= 3 and validation_valid == False
+    algorithm: |
+      For each forbidden pattern violation:
+      1. Remove the violating phrase
+      2. If sentence becomes incomplete, end at last valid word
+      3. Add disclaimer: "[AUTO-CORRECTED]"
+
+    example:
+      original: "I swing my sword at the goblin and kill it"
+      corrected: "I swing my sword at the goblin [AUTO-CORRECTED]"
+
+    flag_for_review: true
+    log_to_research: true
+
+# --- EXAMPLE INVOCATIONS ---
+examples:
+  - name: First Attempt - Valid Action
+    input:
+      current_phase: validation
+      turn_number: 1
+      character_actions:
+        char_zara_001: "Zara-7 raises her multi-tool and fires an energy pulse at the goblin."
+      validation_attempt: 1
+      previous_validation_failure: null
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_id: char_zara_001
+      name: "Zara-7"
+
+    output:
+      validation_valid: true
+      validation_failures:
+        char_zara_001: []
+      validation_attempt: 1
+      previous_validation_failure: null
+      validation_suggestion: null
+      current_phase: dm_adjudication
+      error_state: null
+
+  - name: First Attempt - Invalid (Outcome Language)
+    input:
+      current_phase: validation
+      turn_number: 1
+      character_actions:
+        char_zara_001: "Zara-7 fires at the goblin and kills it with a precise shot."
+      validation_attempt: 1
+      previous_validation_failure: null
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_id: char_zara_001
+      name: "Zara-7"
+
+    output:
+      validation_valid: false
+      validation_failures:
+        char_zara_001:
+          - "Contains outcome verb: 'kills'"
+          - "Assumes success: 'precise shot kills it'"
+      validation_attempt: 1
+      previous_validation_failure: "Contains outcome verb: 'kills', Assumes success: 'precise shot kills it'"
+      validation_suggestion: "Remove 'and kills it with a precise shot' and end with 'Zara-7 fires at the goblin.'"
+      current_phase: character_action  # Retry
+      error_state: null
+
+  - name: Second Attempt - Still Invalid
+    input:
+      current_phase: validation
+      turn_number: 1
+      character_actions:
+        char_zara_001: "Zara-7 fires at the goblin, striking its torso."
+      validation_attempt: 2
+      previous_validation_failure: "Contains outcome verb: 'kills'"
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_id: char_zara_001
+
+    output:
+      validation_valid: false
+      validation_failures:
+        char_zara_001:
+          - "Contains outcome verb: 'striking'"
+          - "Assumes hit: 'striking its torso'"
+      validation_attempt: 2
+      previous_validation_failure: "Contains outcome verb: 'striking', Assumes hit: 'striking its torso'"
+      validation_suggestion: "Use 'aiming at' instead of 'striking': 'Zara-7 fires at the goblin, aiming at its torso.'"
+      current_phase: character_action  # Retry again
+      error_state: null
+
+  - name: Third Attempt - Valid
+    input:
+      current_phase: validation
+      turn_number: 1
+      character_actions:
+        char_zara_001: "Zara-7 raises her multi-tool and fires at the goblin's torso."
+      validation_attempt: 3
+      previous_validation_failure: "Contains outcome verb: 'striking'"
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_id: char_zara_001
+
+    output:
+      validation_valid: true
+      validation_failures:
+        char_zara_001: []
+      validation_attempt: 3
+      previous_validation_failure: null
+      validation_suggestion: null
+      current_phase: dm_adjudication
+      error_state: null
+
+  - name: Max Retries Exceeded - Auto-Correct
+    input:
+      current_phase: validation
+      turn_number: 1
+      character_actions:
+        char_zara_001: "Zara-7 fires and successfully hits the goblin."
+      validation_attempt: 3
+      previous_validation_failure: "Contains outcome verb: 'striking'"
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_id: char_zara_001
+
+    output:
+      validation_valid: false  # Still invalid
+      validation_failures:
+        char_zara_001:
+          - "Contains forbidden word: 'successfully'"
+          - "Assumes hit: 'hits the goblin'"
+      validation_attempt: 3
+      previous_validation_failure: null  # Clear for next turn
+      validation_suggestion: null
+      current_phase: dm_adjudication  # Proceed anyway with auto-correct
+      error_state: "validation_failed_after_3_attempts"
+      auto_corrected_action: "Zara-7 fires at the goblin [AUTO-CORRECTED]"
+      dm_flag: "VALIDATION WARNING: Action auto-corrected after 3 failed attempts"
+
+  - name: Semantic Override - False Positive
+    input:
+      current_phase: validation
+      turn_number: 10
+      character_actions:
+        char_rex_003: "Rex aims his strikes carefully at the guard's weapon arm."
+      validation_attempt: 1
+      previous_validation_failure: null
+      dm_narration: "A guard blocks your path with weapon drawn"
+      strategic_intents:
+        agent_sarah_003: "Disarm the guard"
+      character_id: char_rex_003
+
+    output:
+      validation_valid: true  # Semantic LLM overrides pattern match
+      validation_failures:
+        char_rex_003: []
+      validation_attempt: 1
+      previous_validation_failure: null
+      validation_suggestion: null
+      current_phase: dm_adjudication
+      error_state: null
+      validation_note: |
+        Pattern matching flagged "strikes" but semantic analysis determined
+        "aims his strikes" is expressing intent, not narrating outcome.
+        LLM override: valid.
+
+# --- INTEGRATION NOTES ---
+integration_notes:
+  langgraph_integration: |
+    Implement as LangGraph node with conditional edge for retry routing:
+
+    ```python
+    from typing import Literal
+
+    async def validation_node(state: GameState) -> GameState:
+        character_id = get_current_character_id(state)
+        action = state["character_actions"][character_id]
+
+        # Step 1: Pattern matching
+        pattern_violations = check_forbidden_patterns(action)
+
+        # Step 2: Semantic validation (if needed)
+        semantic_result = None
+        if not pattern_violations or state["validation_attempt"] >= 2:
+            semantic_result = await validate_with_llm(
+                action=action,
+                context=state["dm_narration"],
+                attempt=state["validation_attempt"]
+            )
+
+        # Step 3: Combine results
+        valid, violations = combine_validation_results(
+            pattern_violations, semantic_result
+        )
+
+        # Build output
+        return {
+            **state,
+            "validation_valid": valid,
+            "validation_failures": {character_id: violations},
+            "previous_validation_failure": ", ".join(violations) if violations else None,
+            "validation_suggestion": semantic_result.suggestion if semantic_result else None,
+            "current_phase": determine_next_phase(valid, state["validation_attempt"])
+        }
+
+    def should_retry_validation(state: GameState) -> Literal["valid", "retry", "max_retries"]:
+        """Conditional edge predicate for retry routing"""
+        if state["validation_valid"]:
+            return "valid"
+        elif state["validation_attempt"] < 3:
+            return "retry"
+        else:
+            return "max_retries"
+
+    # Add conditional edge in workflow
+    workflow.add_conditional_edges(
+        "validation",
+        should_retry_validation,
+        {
+            "valid": "dm_adjudication",
+            "retry": "character_action",
+            "max_retries": "dm_adjudication"  # Proceed with warning
+        }
+    )
+    ```
+
+  pattern_matching_implementation: |
+    Use compiled regex for performance:
+
+    ```python
+    import re
+    from typing import Pattern, List, Tuple
+
+    FORBIDDEN_PATTERNS: List[Tuple[Pattern, str]] = [
+        (re.compile(r'\bsuccessfully\b', re.IGNORECASE), "Successfully"),
+        (re.compile(r'\bmanages? to\b', re.IGNORECASE), "Manages to"),
+        (re.compile(r'\bkills?\b', re.IGNORECASE), "Kills"),
+        (re.compile(r'\bhits?\b', re.IGNORECASE), "Hits"),
+        # ... etc
+    ]
+
+    def check_forbidden_patterns(action: str) -> List[str]:
+        violations = []
+        for pattern, name in FORBIDDEN_PATTERNS:
+            if pattern.search(action):
+                violations.append(f"Contains forbidden outcome language: '{name}'")
+        return violations
+    ```
+
+  semantic_validation_caching: |
+    Cache LLM validation results for identical actions to reduce API calls:
+
+    ```python
+    from functools import lru_cache
+    import hashlib
+
+    @lru_cache(maxsize=100)
+    async def validate_with_llm_cached(action_hash: str, attempt: int):
+        # Actual LLM call
+        ...
+
+    def validate_with_llm(action: str, context: str, attempt: int):
+        # Hash action for cache key
+        action_hash = hashlib.md5(action.encode()).hexdigest()
+        return validate_with_llm_cached(action_hash, attempt)
+    ```
+
+  auto_correction_strategy: |
+    When max retries exceeded, apply automatic correction:
+
+    ```python
+    def auto_correct_action(action: str, violations: List[str]) -> str:
+        corrected = action
+        for pattern, _ in FORBIDDEN_PATTERNS:
+            # Remove violating phrases
+            corrected = pattern.sub('', corrected)
+
+        # Clean up extra whitespace
+        corrected = re.sub(r'\s+', ' ', corrected).strip()
+
+        # Add disclaimer
+        corrected += " [AUTO-CORRECTED]"
+
+        return corrected
+    ```
+
+  performance_optimization: |
+    - Pattern matching takes ~1ms (negligible)
+    - LLM semantic validation takes ~500-1500ms
+    - Only call LLM when necessary:
+      * Skip if pattern violations found on attempt 1
+      * Always call on attempt 2+ for stricter check
+
+# --- PERFORMANCE TARGETS ---
+performance_targets:
+  execution_time_p95: 2000  # milliseconds (includes LLM call)
+  execution_time_p50: 500   # milliseconds (pattern only)
+  pattern_matching_time: 5  # milliseconds
+  llm_validation_time_p95: 1500
+  llm_api_timeout: 5000
+  false_positive_rate: 0.05  # <5% false positives
+  false_negative_rate: 0.01  # <1% false negatives (critical)
+
+# --- RELATED REQUIREMENTS ---
+related_requirements:
+  functional:
+    - FR-003  # Narrative overreach detection
+    - FR-004  # Max 3 validation retries
+    - FR-011  # State preservation on errors
+    - FR-013  # LLM API retry logic
+
+  user_stories:
+    - US-002  # Narrative overreach prevention
+    - US-001  # Single AI player turn cycle
+
+  success_criteria:
+    - SC-002  # >95% validation pass rate on first attempt
+    - SC-005  # DM feels in control
+    - SC-014  # 90% success within 3 retry attempts

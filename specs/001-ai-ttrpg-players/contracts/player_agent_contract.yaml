@@ -1,0 +1,510 @@
+# LangGraph Node Contract: Player Agent (Strategic Intent)
+# Purpose: Strategic decision-making layer operating out-of-character
+# Phase: strategic_intent in turn cycle
+# Requirements: FR-001, FR-002, FR-006, FR-007
+
+node_name: player_agent_strategic_intent
+description: |
+  The Player Agent operates at the strategic "player" layer, making out-of-character
+  decisions based on player goals, personality traits, and retrieved memories.
+  This node generates high-level strategic intent that will be interpreted by the
+  character layer, creating the "interpretation gap" for realistic roleplay.
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    # Phase tracking
+    current_phase:
+      type: Literal["strategic_intent"]
+      required: true
+      description: Must be "strategic_intent" when this node executes
+
+    turn_number:
+      type: int
+      required: true
+      description: Current turn number in session
+
+    # DM input
+    dm_narration:
+      type: str
+      required: true
+      description: DM's narration of the current scene
+      validation:
+        min_length: 10
+        max_length: 5000
+
+    # Active agents
+    active_agents:
+      type: list[str]
+      required: true
+      description: List of agent_ids participating in this turn
+      validation:
+        min_items: 1
+        max_items: 4
+        pattern: "^agent_[a-z0-9_]+$"
+
+    # Memory retrieval results
+    retrieved_memories:
+      type: dict[str, list[dict]]
+      required: true
+      description: |
+        Memories retrieved for each agent during memory_query phase.
+        Keys are agent_ids, values are lists of MemoryQueryResult dicts.
+      validation:
+        memory_result_schema:
+          edge:
+            fact: str
+            confidence: float  # 0.0-1.0
+            importance: float  # 0.0-1.0
+            session_number: int
+            days_elapsed: int
+          relevance_score: float  # 0.0-1.0
+          temporal_context: str  # e.g., "3 sessions ago, Day 15"
+          source_attribution: str
+          corrupted: bool
+          original_fact: Optional[str]
+
+    # Multi-agent OOC discussion (if applicable)
+    ooc_messages:
+      type: list[dict]
+      required: false
+      default: []
+      description: |
+        Out-of-character strategic discussion messages from previous
+        multi-agent coordination rounds. Empty for single-agent or first round.
+      validation:
+        message_schema:
+          message_id: str
+          from_agent: str
+          content: str
+          timestamp: datetime
+
+    consensus_state:
+      type: Optional[Literal["unanimous", "majority", "conflicted", "timeout"]]
+      required: false
+      default: null
+      description: |
+        Current consensus state if multi-agent discussion has occurred.
+        null if first round or single agent.
+
+    # Shared party state
+    shared_party_state:
+      type: dict
+      required: true
+      description: Shared party information (ship, party norms)
+      validation:
+        required_fields:
+          - ship_name
+          - ship_strengths
+          - session_number
+          - days_elapsed
+
+  # Agent-specific configuration (loaded from context, not state)
+  agent_config:
+    agent_id:
+      type: str
+      required: true
+      pattern: "^agent_[a-z0-9_]+$"
+
+    player_personality:
+      type: PlayerPersonality
+      required: true
+      fields:
+        analytical_score: float  # 0.0-1.0
+        risk_tolerance: float  # 0.0-1.0
+        detail_oriented: float  # 0.0-1.0
+        emotional_memory: float  # 0.0-1.0
+        assertiveness: float  # 0.0-1.0
+        cooperativeness: float  # 0.0-1.0
+        openness: float  # 0.0-1.0
+        rule_adherence: float  # 0.0-1.0
+        roleplay_intensity: float  # 0.0-1.0
+
+    player_goal:
+      type: str
+      required: true
+      description: Out-of-character objective for this character
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    # Strategic intent output
+    strategic_intents:
+      type: dict[str, str]
+      required: true
+      description: |
+        Map of agent_id to strategic intent string.
+        Intent is high-level directive for character layer.
+      validation:
+        intent_max_length: 500
+        intent_min_length: 20
+      example:
+        agent_alex_001: "Approach the merchant cautiously and negotiate for fuel cells, but don't reveal our desperation"
+
+    # OOC messages (if multi-agent)
+    ooc_messages:
+      type: list[dict]
+      required: true
+      description: |
+        Updated list including any new OOC strategic discussion messages
+        generated during this node execution.
+
+    # Phase progression
+    current_phase:
+      type: Literal["ooc_discussion", "character_action"]
+      required: true
+      description: |
+        Next phase to transition to:
+        - "ooc_discussion" if multi-agent and consensus not reached
+        - "character_action" if single agent or consensus reached
+
+    # Error handling
+    error_state:
+      type: Optional[str]
+      required: false
+      default: null
+      description: Error message if node fails
+
+# --- PRECONDITIONS ---
+preconditions:
+  - condition: state["current_phase"] == "strategic_intent"
+    description: Node must execute during strategic_intent phase
+
+  - condition: state["dm_narration"] is not None and len(state["dm_narration"]) > 0
+    description: DM narration must be present
+
+  - condition: agent_id in state["active_agents"]
+    description: This agent must be active in current turn
+
+  - condition: agent_id in state["retrieved_memories"]
+    description: Memories must have been retrieved for this agent
+
+  - condition: |
+      # If multi-agent and previous consensus state exists, must not be "timeout"
+      len(state["active_agents"]) == 1 or
+      state.get("consensus_state") != "timeout"
+    description: Cannot proceed if multi-agent consensus timed out
+
+# --- POSTCONDITIONS ---
+postconditions:
+  - condition: agent_id in state["strategic_intents"]
+    description: Strategic intent must be generated for this agent
+
+  - condition: |
+      20 <= len(state["strategic_intents"][agent_id]) <= 500
+    description: Strategic intent must be reasonable length
+
+  - condition: state["current_phase"] in ["ooc_discussion", "character_action"]
+    description: Phase must transition to valid next phase
+
+  - condition: |
+      # If single agent, must transition to character_action
+      len(state["active_agents"]) == 1 implies state["current_phase"] == "character_action"
+    description: Single agent must skip OOC discussion
+
+# --- ERROR CONDITIONS ---
+error_conditions:
+  llm_api_failure:
+    retry_strategy:
+      type: exponential_backoff
+      attempts: 5
+      delays: [2, 5, 10, 20, 40]  # seconds
+      max_duration: 77  # sum of delays
+    fallback: rollback_to_memory_query_phase
+
+  context_window_overflow:
+    detection: token_count > 0.8 * max_tokens
+    action: compress_retrieved_memories
+    description: |
+      If retrieved memories + DM narration + OOC messages exceed 80% of
+      context window, compress memories to summaries and retry.
+
+  invalid_strategic_intent:
+    detection: intent is empty or exceeds length limits
+    action: retry_with_modified_prompt
+    max_retries: 3
+
+  personality_drift:
+    detection: |
+      Strategic intent contradicts player personality traits
+      (e.g., risk_tolerance=0.1 but intent is extremely reckless)
+    action: log_warning_and_proceed
+    description: |
+      Personality drift is acceptable (models personality changes over time)
+      but should be logged for researcher review.
+
+# --- RETRY LOGIC ---
+retry_logic:
+  # Progressive prompt modification
+  attempt_1:
+    system_prompt: |
+      You are {player_name}, an AI player in a tabletop RPG. You operate at the
+      strategic "player" level, making out-of-character decisions.
+
+      PLAYER GOAL: {player_goal}
+      PERSONALITY TRAITS: {personality_summary}
+
+      CURRENT SCENE:
+      {dm_narration}
+
+      RELEVANT MEMORIES:
+      {formatted_memories}
+
+      Decide your strategic intent for this turn. Provide a high-level directive
+      that your character will interpret and execute. Focus on:
+      - What you want to accomplish (strategic objective)
+      - How your character should approach it (tone, method)
+      - Any constraints or cautions (risks to avoid)
+
+      Your response should be 1-3 sentences of clear strategic direction.
+
+  attempt_2:
+    system_prompt: |
+      {attempt_1_prompt}
+
+      RETRY: Your previous response was invalid ({failure_reason}).
+
+      Provide a clear strategic directive between 20-500 characters.
+
+  attempt_3:
+    system_prompt: |
+      {attempt_2_prompt}
+
+      FINAL ATTEMPT: Format your response as:
+      "I want my character to [action] by [method], [optional constraint]"
+
+# --- VALIDATION RULES ---
+validation_rules:
+  strategic_intent_format:
+    - rule: Must not contain character-layer roleplay
+      examples:
+        invalid: "Zara-7 steps forward and says 'Greetings, merchant'"
+        valid: "Approach the merchant cautiously and start negotiations"
+        reason: Strategic layer provides direction, not dialogue
+
+    - rule: Must not narrate outcomes
+      examples:
+        invalid: "Attack the enemy and kill them"
+        valid: "Attack the enemy aggressively"
+        reason: Outcomes are determined by DM, not player
+
+    - rule: Should reflect player personality
+      examples:
+        valid_cautious: "Scout the area carefully before committing" # risk_tolerance < 0.3
+        valid_bold: "Charge in immediately before they escape" # risk_tolerance > 0.7
+        reason: Intent should align with personality traits
+
+  memory_integration:
+    - rule: Must reference retrieved memories when relevant
+      detection: |
+        If retrieved_memories contain information about NPCs/locations in
+        dm_narration, strategic intent should acknowledge this context
+      example: |
+        Memory: "Merchant Galvin helped us last session"
+        DM Narration: "You see Galvin's shop"
+        Valid Intent: "Approach Galvin and ask for help again"
+        Invalid Intent: "Investigate the unknown merchant" (ignores memory)
+
+# --- EXAMPLE INVOCATIONS ---
+examples:
+  - name: Single Agent - First Turn
+    input:
+      current_phase: strategic_intent
+      turn_number: 1
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      active_agents: ["agent_alex_001"]
+      retrieved_memories:
+        agent_alex_001: []  # No relevant memories
+      ooc_messages: []
+      consensus_state: null
+      shared_party_state:
+        ship_name: "The Raptor"
+        ship_strengths: ["Fast", "Well-armed"]
+        session_number: 1
+        days_elapsed: 0
+      # Agent config (from context)
+      agent_id: agent_alex_001
+      player_personality:
+        analytical_score: 0.7
+        risk_tolerance: 0.6
+        detail_oriented: 0.8
+        assertiveness: 0.6
+      player_goal: "Get character involved in crazy space adventures"
+
+    output:
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression - this is exactly the kind of adventure we want"
+      ooc_messages: []  # No multi-agent discussion
+      current_phase: character_action
+      error_state: null
+
+  - name: Multi-Agent - Memory Context
+    input:
+      current_phase: strategic_intent
+      turn_number: 25
+      dm_narration: "Merchant Galvin looks nervous. 'I... I can't help you this time,' he stammers."
+      active_agents: ["agent_alex_001", "agent_morgan_002", "agent_chris_003"]
+      retrieved_memories:
+        agent_alex_001:
+          - edge:
+              fact: "Merchant Galvin sold us fuel cells at fair price in Session 3"
+              confidence: 0.95
+              session_number: 3
+              days_elapsed: 12
+            relevance_score: 0.9
+            temporal_context: "5 sessions ago, Day 12"
+            source_attribution: "Session 3 DM narration"
+            corrupted: false
+        agent_morgan_002:
+          - edge:
+              fact: "Merchant Galvin seemed scared of someone during last visit"
+              confidence: 0.7
+              session_number: 5
+              days_elapsed: 20
+            relevance_score: 0.85
+            temporal_context: "3 sessions ago, Day 20"
+            corrupted: false
+      ooc_messages: []
+      shared_party_state:
+        ship_name: "The Raptor"
+        session_number: 8
+        days_elapsed: 45
+      agent_id: agent_alex_001
+      player_personality:
+        analytical_score: 0.7
+        risk_tolerance: 0.4  # Cautious
+        cooperativeness: 0.8
+
+    output:
+      strategic_intents:
+        agent_alex_001: "Ask Galvin what's wrong and offer to help - something scared him before, and he was fair to us"
+      ooc_messages:
+        - message_id: msg_001
+          from_agent: agent_alex_001
+          content: "Galvin helped us before. We should find out what's threatening him."
+          timestamp: 2025-10-19T14:32:00Z
+      current_phase: ooc_discussion  # Transition to multi-agent discussion
+      error_state: null
+
+  - name: Error Recovery - Context Overflow
+    input:
+      current_phase: strategic_intent
+      turn_number: 150
+      dm_narration: "You enter the ancient temple ruins..."
+      active_agents: ["agent_alex_001"]
+      retrieved_memories:
+        agent_alex_001:
+          # 50+ memory results causing context overflow
+          - [... many memory entries ...]
+      # Token count exceeds 80% of limit
+
+    output:
+      # System automatically compresses memories
+      error_state: "context_overflow_handled"
+      strategic_intents:
+        agent_alex_001: "Proceed carefully into the temple, watching for traps based on ancient ruins patterns we've seen"
+      current_phase: character_action
+
+# --- INTEGRATION NOTES ---
+integration_notes:
+  langgraph_integration: |
+    This node should be implemented as a standard LangGraph node function:
+
+    ```python
+    async def player_agent_strategic_intent(state: GameState) -> GameState:
+        # Load agent configuration
+        agent_config = load_agent_config(agent_id)
+
+        # Build prompt with memories and scene context
+        prompt = build_strategic_prompt(
+            dm_narration=state["dm_narration"],
+            memories=state["retrieved_memories"][agent_id],
+            personality=agent_config.personality,
+            player_goal=agent_config.player_goal
+        )
+
+        # Call LLM with retry logic
+        strategic_intent = await call_llm_with_retry(prompt)
+
+        # Validate intent
+        if not validate_strategic_intent(strategic_intent):
+            raise InvalidIntentError(...)
+
+        # Update state
+        return {
+            **state,
+            "strategic_intents": {
+                **state.get("strategic_intents", {}),
+                agent_id: strategic_intent
+            },
+            "current_phase": determine_next_phase(state["active_agents"])
+        }
+    ```
+
+  rq_worker_integration: |
+    For multi-agent parallelism, dispatch to RQ workers:
+
+    ```python
+    from rq import Queue
+
+    def player_agent_strategic_intent_parallel(state: GameState) -> GameState:
+        jobs = []
+        for agent_id in state["active_agents"]:
+            job = base_persona_queue.enqueue(
+                generate_strategic_intent_worker,
+                args=(agent_id, state),
+                job_timeout=30
+            )
+            jobs.append((agent_id, job))
+
+        # Wait for all jobs
+        results = {}
+        for agent_id, job in jobs:
+            while job.result is None and not job.is_failed:
+                time.sleep(0.1)
+            results[agent_id] = job.result
+
+        return {**state, "strategic_intents": results}
+    ```
+
+  memory_retrieval_dependency: |
+    This node REQUIRES the memory_query phase to complete first.
+    Retrieved memories are critical input for strategic decision-making.
+
+    If memory_query returns empty results, agent should still proceed
+    but may make decisions based only on immediate scene context.
+
+  multi_agent_coordination: |
+    For multi-agent scenarios:
+    1. All agents generate strategic intents in parallel
+    2. Agents post OOC discussion messages
+    3. Transition to ooc_discussion phase for coordination
+    4. Consensus detection determines when to proceed to character_action
+
+    Single-agent scenarios skip OOC discussion entirely.
+
+# --- PERFORMANCE TARGETS ---
+performance_targets:
+  execution_time_p95: 3000  # milliseconds
+  execution_time_p50: 1500
+  llm_api_timeout: 20000  # 20 seconds per call
+  memory_retrieval_max: 10  # Max memories to include in prompt
+  token_budget: 1500  # Max tokens for strategic intent generation
+
+# --- RELATED REQUIREMENTS ---
+related_requirements:
+  functional:
+    - FR-001  # Dual-layer architecture
+    - FR-002  # Turn phase sequencing
+    - FR-006  # Memory retrieval timing
+    - FR-007  # Memory query support
+    - FR-013  # LLM API retry logic
+
+  user_stories:
+    - US-001  # Single AI player turn cycle
+    - US-004  # Player-character knowledge separation
+    - US-005  # Multi-agent coordination
+
+  success_criteria:
+    - SC-001  # 100+ consecutive turns
+    - SC-010  # Spontaneous memory reference

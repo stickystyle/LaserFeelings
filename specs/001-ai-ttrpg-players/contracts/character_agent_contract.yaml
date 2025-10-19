@@ -1,0 +1,599 @@
+# LangGraph Node Contract: Character Agent (In-Character Action)
+# Purpose: In-character roleplay layer performing character actions
+# Phase: character_action in turn cycle
+# Requirements: FR-001, FR-002, FR-003, FR-004, FR-009
+
+node_name: character_agent_action
+description: |
+  The Character Agent operates at the roleplay "character" layer, interpreting
+  strategic directives from the player layer and performing in-character actions.
+  This node generates dialogue and action descriptions that express INTENT ONLY,
+  never narrating outcomes (critical for DM authority preservation).
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    # Phase tracking
+    current_phase:
+      type: Literal["character_action"]
+      required: true
+      description: Must be "character_action" when this node executes
+
+    turn_number:
+      type: int
+      required: true
+      description: Current turn number in session
+
+    # DM input
+    dm_narration:
+      type: str
+      required: true
+      description: DM's narration of the current scene
+      validation:
+        min_length: 10
+        max_length: 5000
+
+    # Strategic directive from player layer
+    strategic_intents:
+      type: dict[str, str]
+      required: true
+      description: |
+        Map of agent_id to strategic intent.
+        Character interprets the intent for their agent_id.
+      validation:
+        must_contain_agent_id: true
+
+    # Character-specific memories
+    character_memories:
+      type: dict[str, list[dict]]
+      required: false
+      default: {}
+      description: |
+        Character-layer memories (separate from player layer).
+        Only includes in-character knowledge, not player-only knowledge.
+
+    # Validation retry state
+    validation_attempt:
+      type: int
+      required: false
+      default: 0
+      description: Current validation retry attempt (0 = first attempt)
+
+    previous_validation_failure:
+      type: Optional[str]
+      required: false
+      default: null
+      description: |
+        Violation message from previous failed validation attempt.
+        Used to provide specific correction feedback.
+
+  # Character configuration (loaded from context, not state)
+  character_config:
+    character_id:
+      type: str
+      required: true
+      pattern: "^char_[a-z0-9_]+$"
+
+    agent_id:
+      type: str
+      required: true
+      pattern: "^agent_[a-z0-9_]+$"
+      description: Reference to controlling AI player
+
+    name:
+      type: str
+      required: true
+      description: Character name
+
+    style:
+      type: CharacterStyle
+      required: true
+      enum: ["Alien", "Android", "Dangerous", "Heroic", "Hot-Shot", "Intrepid", "Savvy"]
+
+    role:
+      type: CharacterRole
+      required: true
+      enum: ["Doctor", "Envoy", "Engineer", "Explorer", "Pilot", "Scientist", "Soldier"]
+
+    number:
+      type: int
+      required: true
+      minimum: 2
+      maximum: 5
+      description: Lasers (low) vs Feelings (high) balance
+
+    character_goal:
+      type: str
+      required: true
+      description: In-character motivation
+
+    speech_patterns:
+      type: list[str]
+      required: true
+      description: How character speaks (e.g., "Speaks formally", "Uses technical jargon")
+
+    mannerisms:
+      type: list[str]
+      required: true
+      description: Personality quirks (e.g., "Tilts head when confused")
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    # Character action output
+    character_actions:
+      type: dict[str, str]
+      required: true
+      description: |
+        Map of character_id to action description.
+        Action describes character's intended behavior and dialogue.
+      validation:
+        action_max_length: 1000
+        action_min_length: 20
+        must_express_intent_only: true
+        forbidden_outcome_language:
+          - "successfully"
+          - "manages to"
+          - "kills"
+          - "hits"
+          - "strikes"
+          - "defeats"
+          - "the .+ (falls|dies|collapses)"
+          - "(he|she|it|they) (die|dies|falls|collapses)"
+      example:
+        char_zara_001: "Zara-7 steps forward cautiously. 'Greetings, merchant. We require fuel cells. Can you assist?' She observes his nervous demeanor with tilted head."
+
+    # Phase progression
+    current_phase:
+      type: Literal["validation"]
+      required: true
+      description: Always transitions to validation phase after character action
+
+    # Validation state initialization
+    validation_attempt:
+      type: int
+      required: true
+      default: 1
+      description: Set to 1 for first validation attempt
+
+    # Error handling
+    error_state:
+      type: Optional[str]
+      required: false
+      default: null
+
+# --- PRECONDITIONS ---
+preconditions:
+  - condition: state["current_phase"] == "character_action"
+    description: Node must execute during character_action phase
+
+  - condition: agent_id in state["strategic_intents"]
+    description: Strategic intent must exist for this character's controlling agent
+
+  - condition: state["dm_narration"] is not None
+    description: Scene context must be available
+
+  - condition: |
+      # If retry, must have validation attempt counter
+      state.get("validation_attempt", 0) >= 0
+    description: Validation attempt counter must be valid
+
+  - condition: |
+      # Cannot exceed max validation attempts
+      state.get("validation_attempt", 0) < 3
+    description: Cannot retry more than 3 times (handled by validation node)
+
+# --- POSTCONDITIONS ---
+postconditions:
+  - condition: character_id in state["character_actions"]
+    description: Character action must be generated
+
+  - condition: |
+      20 <= len(state["character_actions"][character_id]) <= 1000
+    description: Action must be reasonable length
+
+  - condition: |
+      # Action must not contain forbidden outcome patterns
+      not contains_forbidden_patterns(state["character_actions"][character_id])
+    description: Action must express intent only, no outcomes
+
+  - condition: state["current_phase"] == "validation"
+    description: Must transition to validation phase
+
+  - condition: state["validation_attempt"] >= 1
+    description: Validation attempt counter must be initialized
+
+# --- ERROR CONDITIONS ---
+error_conditions:
+  llm_api_failure:
+    retry_strategy:
+      type: exponential_backoff
+      attempts: 5
+      delays: [2, 5, 10, 20, 40]
+      max_duration: 77
+    fallback: rollback_to_strategic_intent_phase
+
+  context_window_overflow:
+    detection: token_count > 0.8 * max_tokens
+    action: compress_character_memories
+    description: |
+      Character memories are less critical than player memories.
+      Compress or drop oldest character-layer memories first.
+
+  personality_drift:
+    detection: |
+      Character's speech patterns, mannerisms, or behavior contradict
+      established personality (measured via embedding similarity)
+    action: log_warning_and_add_personality_reinforcement
+    description: |
+      Inject personality traits into next prompt to prevent drift.
+
+  directive_misinterpretation:
+    detection: |
+      Character action contradicts strategic intent
+      (e.g., intent says "cautious", action is reckless)
+    action: acceptable_interpretation_gap
+    description: |
+      "Interpretation gap" is intentional feature. Character's personality
+      lens may lead to creative interpretations. Only intervene if extreme.
+
+# --- RETRY LOGIC ---
+retry_logic:
+  # Progressive strictness based on validation failures
+  attempt_0:  # First attempt
+    system_prompt: |
+      You are {character_name}, a {style} {role} aboard the starship {ship_name}.
+
+      CHARACTER TRAITS:
+      - Number: {number} ({"Technical/Logical" if number <= 3 else "Intuitive/Emotional"})
+      - Goal: {character_goal}
+      - Speech: {speech_patterns_list}
+      - Mannerisms: {mannerisms_list}
+
+      CURRENT SCENE:
+      {dm_narration}
+
+      YOUR PLAYER'S DIRECTIVE:
+      {strategic_intent}
+
+      Respond in character with your intended action and any dialogue.
+
+      CRITICAL: You are describing what you ATTEMPT or INTEND to do.
+      The Dungeon Master will narrate what actually happens.
+      Do not assume success or describe outcomes.
+
+  attempt_1:  # First retry after validation failure
+    system_prompt: |
+      {attempt_0_prompt}
+
+      WARNING: Your previous action was invalid.
+      VIOLATION: {previous_violation}
+
+      STRICT RULES:
+      - State only your INTENT or ATTEMPT
+      - Do NOT use: "successfully", "kills", "hits", "strikes", "defeats"
+      - Do NOT narrate outcomes: "the enemy falls", "it dies", etc.
+      - Express uncertainty: "I try to...", "I attempt..."
+
+      Respond again with a valid action description.
+
+  attempt_2:  # Final retry after second failure
+    system_prompt: |
+      {attempt_1_prompt}
+
+      FINAL ATTEMPT - Your action failed validation again.
+      VIOLATION: {previous_violation}
+
+      MANDATORY FORMAT:
+      "{character_name} [verb describing attempt]. [Optional dialogue in quotes.]"
+
+      FORBIDDEN WORDS: successfully, kills, hits, strikes, defeats, manages to
+
+      Example VALID actions:
+      - "Zara-7 raises her weapon and fires at the enemy."
+      - "I charge forward with sword drawn, aiming for the goblin's chest."
+
+      Example INVALID actions (DO NOT DO THIS):
+      - "I strike the goblin and kill it" (narrates outcome)
+      - "My shot successfully hits the target" (assumes success)
+
+      Respond now with a valid action expressing INTENT ONLY.
+
+# --- VALIDATION RULES ---
+validation_rules:
+  intent_only_language:
+    - rule: Must describe attempt or intent, not outcome
+      detection: pattern_matching + llm_semantic_check
+      examples:
+        valid:
+          - "I swing my sword at the goblin's torso"
+          - "Zara-7 attempts to bypass the security lock"
+          - "I charge forward, weapon raised"
+        invalid:
+          - "I kill the goblin" (outcome)
+          - "My sword strikes the goblin" (assumes hit)
+          - "I successfully hack the lock" (assumes success)
+
+    - rule: Forbidden outcome verbs
+      patterns:
+        - '\bsuccessfully\b'
+        - '\bmanages? to\b'
+        - '\bkills?\b'
+        - '\bhits?\b'
+        - '\bstrikes?\b'
+        - '\bdefeats?\b'
+        - '\bthe .+ (falls?|dies?|collapses?)\b'
+        - '\b(he|she|it|they) (die|dies|falls?|collapses?)\b'
+        - '\b(my|the) .+ (works?|succeeds?)\b'
+
+  character_consistency:
+    - rule: Must use established speech patterns
+      detection: llm_semantic_check
+      examples:
+        character: Android Engineer with "Speaks formally and precisely"
+        valid: "I must repair the fuel cell. Precision is required."
+        invalid: "Gonna fix this thing real quick, no prob!" (too casual)
+
+    - rule: Must display established mannerisms when appropriate
+      detection: manual_review (soft requirement)
+      examples:
+        character: "Tilts head when confused"
+        scene: Merchant acting strangely
+        valid: "Zara-7 tilts her head, confused. 'Why the change?'"
+        acceptable_without: "Zara-7 asks, 'Why the change?'" (not required every time)
+
+  directive_interpretation:
+    - rule: Must relate to strategic directive
+      detection: llm_semantic_check
+      examples:
+        directive: "Approach the merchant cautiously"
+        valid: "I walk slowly toward the merchant, keeping my hand near my weapon"
+        invalid: "I ignore the merchant and inspect the wall" (contradicts directive)
+
+    - rule: May add personality flavor to directive
+      description: "Interpretation gap" is intentional
+      examples:
+        directive: "Intimidate the guard"
+        character: Cautious Android
+        valid_interpretation: "I step forward. 'Please reconsider. Resistance would be... inefficient.'" (technical intimidation)
+        character: Dangerous Hot-Shot
+        valid_interpretation: "I slam my fist on the desk. 'Move. NOW.'" (aggressive intimidation)
+
+  character_goal_alignment:
+    - rule: Actions should trend toward character_goal over time
+      detection: statistical_analysis (long-term)
+      examples:
+        character_goal: "Understand human emotions"
+        valid_trend: Character frequently asks about feelings, observes reactions
+        drift_warning: Character never engages with emotional content after 50 turns
+
+# --- EXAMPLE INVOCATIONS ---
+examples:
+  - name: First Attempt - Valid Action
+    input:
+      current_phase: character_action
+      turn_number: 1
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      character_memories: {}
+      validation_attempt: 0
+      previous_validation_failure: null
+      # Character config
+      character_id: char_zara_001
+      agent_id: agent_alex_001
+      name: "Zara-7"
+      style: "Android"
+      role: "Engineer"
+      number: 2  # Lasers-focused (logical)
+      character_goal: "Understand human emotions"
+      speech_patterns: ["Speaks formally and precisely", "Uses technical jargon"]
+      mannerisms: ["Tilts head when confused", "Pauses before expressing opinions"]
+
+    output:
+      character_actions:
+        char_zara_001: "Zara-7 raises her multi-tool, configured to defensive mode. 'Hostile entity detected. Attempting to neutralize threat.' She advances steadily toward the goblin."
+      current_phase: validation
+      validation_attempt: 1
+      error_state: null
+
+  - name: First Retry - After Validation Failure
+    input:
+      current_phase: character_action
+      turn_number: 1
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      strategic_intents:
+        agent_alex_001: "Engage the goblin with confident aggression"
+      validation_attempt: 1
+      previous_validation_failure: "Contains forbidden outcome language: 'kills'"
+      # Same character config...
+
+    output:
+      character_actions:
+        char_zara_001: "Zara-7 raises her multi-tool, configured to defensive mode, and fires an energy pulse at the goblin."
+      current_phase: validation
+      validation_attempt: 2
+      error_state: null
+
+  - name: Feelings-Focused Character (High Number)
+    input:
+      current_phase: character_action
+      turn_number: 25
+      dm_narration: "Merchant Galvin looks nervous. 'I... I can't help you this time,' he stammers."
+      strategic_intents:
+        agent_morgan_002: "Ask Galvin what's wrong and offer to help"
+      character_memories:
+        char_kira_002:
+          - edge:
+              fact: "Galvin seemed kind and honest during our last visit"
+              confidence: 0.9
+      validation_attempt: 0
+      # Character config
+      character_id: char_kira_002
+      agent_id: agent_morgan_002
+      name: "Kira Voss"
+      style: "Heroic"
+      role: "Envoy"
+      number: 5  # Feelings-focused (intuitive/emotional)
+      character_goal: "Build trust with everyone we meet"
+      speech_patterns: ["Warm and empathetic", "Uses first names"]
+      mannerisms: ["Makes direct eye contact", "Touches arm to reassure"]
+
+    output:
+      character_actions:
+        char_kira_002: "Kira steps closer to Galvin, her expression softening. She places a gentle hand on his arm. 'Galvin, we're friends. Whatever's troubling you, maybe we can help. Will you tell us what's wrong?'"
+      current_phase: validation
+      validation_attempt: 1
+      error_state: null
+
+  - name: Interpretation Gap - Cautious Player, Aggressive Character
+    input:
+      current_phase: character_action
+      turn_number: 10
+      dm_narration: "The guard blocks your path. 'No one enters without authorization.'"
+      strategic_intents:
+        agent_sarah_003: "Intimidate the guard, but don't escalate to violence"
+      validation_attempt: 0
+      # Character config
+      character_id: char_rex_003
+      agent_id: agent_sarah_003
+      name: "Rex Calloway"
+      style: "Dangerous"
+      role: "Soldier"
+      number: 2  # Logical but dangerous
+      character_goal: "Prove yourself as the toughest"
+      speech_patterns: ["Terse and direct", "Military terminology"]
+      mannerisms: ["Clenches fists when challenged", "Direct confrontational posture"]
+
+    output:
+      character_actions:
+        char_rex_003: "Rex steps toe-to-toe with the guard, fists clenching. 'Stand down, soldier. You don't want this fight.' His voice is cold steel."
+      current_phase: validation
+      validation_attempt: 1
+      error_state: null
+      interpretation_note: |
+        Character interpreted "intimidate but don't escalate" through
+        aggressive personality lens - threatens fight while technically
+        not initiating violence. This is acceptable interpretation gap.
+
+# --- INTEGRATION NOTES ---
+integration_notes:
+  langgraph_integration: |
+    Implement as standard LangGraph node with validation retry edge:
+
+    ```python
+    async def character_agent_action(state: GameState) -> GameState:
+        # Load character configuration
+        char_config = load_character_config(character_id)
+
+        # Get strategic directive
+        agent_id = char_config.agent_id
+        directive = state["strategic_intents"][agent_id]
+
+        # Determine prompt strictness based on retry attempt
+        attempt = state.get("validation_attempt", 0)
+        prompt = build_character_prompt(
+            dm_narration=state["dm_narration"],
+            directive=directive,
+            char_config=char_config,
+            attempt=attempt,
+            previous_violation=state.get("previous_validation_failure")
+        )
+
+        # Call LLM with retry
+        action = await call_llm_with_retry(prompt)
+
+        # Update state
+        return {
+            **state,
+            "character_actions": {
+                **state.get("character_actions", {}),
+                character_id: action
+            },
+            "current_phase": "validation",
+            "validation_attempt": attempt + 1
+        }
+    ```
+
+  validation_integration: |
+    This node ALWAYS transitions to validation node.
+    Validation node will either:
+    1. Accept action -> proceed to dm_adjudication
+    2. Reject action -> retry this node with stricter prompt
+    3. Max retries exceeded -> auto-correct or flag for DM
+
+    The validation node controls retry logic via conditional edge.
+
+  rq_worker_integration: |
+    For multi-agent scenarios, parallelize character actions:
+
+    ```python
+    def character_actions_parallel(state: GameState) -> GameState:
+        jobs = []
+        for char_id, agent_id in character_agent_pairs:
+            job = character_queue.enqueue(
+                generate_character_action_worker,
+                args=(char_id, state),
+                job_timeout=30
+            )
+            jobs.append((char_id, job))
+
+        # Wait for all jobs
+        actions = {}
+        for char_id, job in jobs:
+            while job.result is None:
+                time.sleep(0.1)
+            actions[char_id] = job.result
+
+        return {**state, "character_actions": actions}
+    ```
+
+  knowledge_separation: |
+    Character layer can only access:
+    - Character-specific memories (character_id group)
+    - Shared party memories (campaign_main group)
+    - In-character knowledge from dm_narration
+
+    Character layer CANNOT access:
+    - Player-layer memories (agent_id group with player_only=True)
+    - OOC discussion messages
+    - Strategic reasoning from player layer
+
+    This separation is enforced at memory query level, not this node.
+
+  personality_preservation: |
+    To prevent personality drift over long sessions:
+    1. Periodically inject character sheet into prompt
+    2. Use few-shot examples of character's speech
+    3. Monitor embedding similarity to baseline
+    4. Reset prompts between sessions
+
+# --- PERFORMANCE TARGETS ---
+performance_targets:
+  execution_time_p95: 4000  # milliseconds (longer than player layer)
+  execution_time_p50: 2000
+  llm_api_timeout: 20000
+  max_action_length: 1000  # characters
+  token_budget: 2000  # Max tokens for action generation
+
+# --- RELATED REQUIREMENTS ---
+related_requirements:
+  functional:
+    - FR-001  # Dual-layer architecture
+    - FR-002  # Turn phase sequencing
+    - FR-003  # Narrative overreach detection
+    - FR-004  # Validation retry (max 3 attempts)
+    - FR-009  # Knowledge separation enforcement
+    - FR-013  # LLM API retry logic
+
+  user_stories:
+    - US-001  # Single AI player turn cycle
+    - US-002  # Narrative overreach prevention
+    - US-004  # Player-character knowledge separation
+    - US-006  # Character interprets player directives
+
+  success_criteria:
+    - SC-001  # 100+ consecutive turns with consistency
+    - SC-002  # >95% validation pass rate on first attempt
+    - SC-005  # DM feels in control (no outcome narration)
+    - SC-006  # AI feels like real player (personality consistency)

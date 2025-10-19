@@ -1,0 +1,743 @@
+# LangGraph Node Contract: Memory Query
+# Purpose: Retrieve relevant memories from Graphiti knowledge graph
+# Phase: memory_query in turn cycle
+# Requirements: FR-005, FR-006, FR-007, FR-019
+
+node_name: memory_query_node
+description: |
+  The Memory Query Node retrieves relevant memories from the Graphiti knowledge
+  graph to provide context for strategic decision-making and character actions.
+  Supports temporal queries, memory corruption simulation, and separation between
+  personal, shared, and character-layer memories.
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    # Phase tracking
+    current_phase:
+      type: Literal["memory_query"]
+      required: true
+      description: Must be "memory_query" when this node executes
+
+    turn_number:
+      type: int
+      required: true
+
+    # DM input (context for query generation)
+    dm_narration:
+      type: str
+      required: true
+      description: DM's narration used to generate semantic search query
+      validation:
+        min_length: 10
+        max_length: 5000
+
+    # Active agents
+    active_agents:
+      type: list[str]
+      required: true
+      description: List of agent_ids to retrieve memories for
+      validation:
+        min_items: 1
+        max_items: 4
+        pattern: "^agent_[a-z0-9_]+$"
+
+    # Shared party state (for temporal context)
+    shared_party_state:
+      type: dict
+      required: true
+      validation:
+        required_fields:
+          - session_number
+          - days_elapsed
+
+    # Explicit query override (optional)
+    explicit_memory_query:
+      type: Optional[str]
+      required: false
+      default: null
+      description: |
+        Optional explicit query from DM or system.
+        If provided, use this instead of generating from dm_narration.
+
+  # Agent configuration (from context)
+  agent_config:
+    agent_id:
+      type: str
+      required: true
+      pattern: "^agent_[a-z0-9_]+$"
+
+    character_id:
+      type: str
+      required: true
+      pattern: "^char_[a-z0-9_]+$"
+
+    player_personality:
+      type: PlayerPersonality
+      required: true
+      fields:
+        detail_oriented: float  # Affects corruption probability
+        emotional_memory: float  # Affects corruption type
+        base_decay_rate: float  # Base memory corruption rate
+
+  # Memory configuration (from global config)
+  memory_config:
+    corruption_strength:
+      type: float
+      required: true
+      minimum: 0.0
+      maximum: 1.0
+      default: 0.5
+      description: Global memory corruption rate multiplier
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    # Retrieved memories
+    retrieved_memories:
+      type: dict[str, list[dict]]
+      required: true
+      description: |
+        Map of agent_id to list of MemoryQueryResult objects.
+        Each agent gets memories from:
+        - Personal memory store (agent_id group)
+        - Character memory store (character_id group)
+        - Shared party memory (campaign_main group)
+      validation:
+        memory_result_schema:
+          edge:
+            uuid: str
+            fact: str
+            valid_at: datetime
+            invalid_at: Optional[datetime]
+            episode_ids: list[str]
+            agent_id: str
+            memory_type: Literal["episodic", "semantic", "procedural"]
+            session_number: int
+            days_elapsed: int
+            confidence: float  # 0.0-1.0
+            importance: float  # 0.0-1.0
+            rehearsal_count: int
+            corruption_type: Optional[str]
+            original_uuid: Optional[str]
+          relevance_score: float  # 0.0-1.0 from semantic search
+          temporal_context: str  # "3 sessions ago, Day 15"
+          source_attribution: str  # "Session 3 DM narration"
+          corrupted: bool  # True if memory was corrupted during retrieval
+          original_fact: Optional[str]  # Original fact if corrupted=True
+
+    # Memory query metadata
+    memory_query_metadata:
+      type: dict[str, dict]
+      required: true
+      description: Query execution metadata per agent
+      schema:
+        agent_id:
+          query_text: str
+          total_results: int
+          corrupted_count: int
+          execution_time_ms: float
+          group_ids_searched: list[str]
+
+    # Phase progression
+    current_phase:
+      type: Literal["strategic_intent"]
+      required: true
+      description: Always transitions to strategic_intent phase
+
+    # Error handling
+    error_state:
+      type: Optional[str]
+      required: false
+      default: null
+
+# --- PRECONDITIONS ---
+preconditions:
+  - condition: state["current_phase"] == "memory_query"
+    description: Must execute during memory_query phase
+
+  - condition: state["dm_narration"] is not None
+    description: DM narration must be present for query generation
+
+  - condition: len(state["active_agents"]) > 0
+    description: At least one agent must be active
+
+  - condition: state["shared_party_state"]["session_number"] >= 1
+    description: Session number must be valid
+
+  - condition: state["shared_party_state"]["days_elapsed"] >= 0
+    description: Days elapsed must be non-negative
+
+# --- POSTCONDITIONS ---
+postconditions:
+  - condition: len(state["retrieved_memories"]) == len(state["active_agents"])
+    description: Must retrieve memories for all active agents
+
+  - condition: |
+      all(agent_id in state["memory_query_metadata"] for agent_id in state["active_agents"])
+    description: Must include metadata for all agents
+
+  - condition: |
+      all(
+        0 <= len(memories) <= 50
+        for memories in state["retrieved_memories"].values()
+      )
+    description: Memory count per agent must be reasonable (0-50)
+
+  - condition: state["current_phase"] == "strategic_intent"
+    description: Must transition to strategic_intent phase
+
+  - condition: |
+      # All retrieved memories must have required fields
+      all(
+        "edge" in mem and "relevance_score" in mem and "temporal_context" in mem
+        for memories in state["retrieved_memories"].values()
+        for mem in memories
+      )
+    description: All memory results must have valid structure
+
+# --- ERROR CONDITIONS ---
+error_conditions:
+  graphiti_connection_failure:
+    detection: Cannot connect to Neo4j database
+    retry_strategy:
+      type: exponential_backoff
+      attempts: 3
+      delays: [1, 2, 4]
+    fallback: proceed_with_empty_memories
+    description: |
+      If Graphiti/Neo4j is unavailable, proceed with empty memory retrieval.
+      Agents will make decisions based only on current scene context.
+
+  semantic_search_timeout:
+    detection: Graphiti search exceeds 10 seconds
+    action: reduce_result_limit_and_retry
+    fallback: return_partial_results
+    description: |
+      If semantic search is slow, reduce limit from 10 to 5 and retry.
+      If still timeout, return whatever results are available.
+
+  memory_corruption_calculation_error:
+    detection: Corruption probability calculation fails
+    action: skip_corruption_for_this_retrieval
+    fallback: return_uncorrupted_memories
+    description: |
+      If corruption simulation fails, return memories as-is without corruption.
+      Log error for researcher review.
+
+  invalid_temporal_constraint:
+    detection: session_start > session_end in query
+    action: auto_correct_constraint
+    example: |
+      If session_start=10, session_end=5, swap to session_start=5, session_end=10
+
+  empty_results_for_critical_query:
+    detection: Zero results for explicitly requested memory
+    action: log_warning_and_proceed
+    description: |
+      If DM explicitly asks "What do we know about Galvin?" but no results,
+      return empty list with metadata noting "no_results_found".
+      DO NOT invent false memories.
+
+# --- MEMORY QUERY ALGORITHM ---
+memory_query_algorithm:
+  step_1_generate_query:
+    description: Extract semantic search query from DM narration
+    input: dm_narration
+    methods:
+      auto_generation:
+        description: Use LLM to extract key entities and concepts
+        prompt: |
+          Extract key searchable concepts from this TTRPG scene narration.
+          Return 2-4 search terms for memory retrieval (NPCs, locations, items, events).
+
+          NARRATION: {dm_narration}
+
+          Return JSON: {{"search_terms": ["term1", "term2", ...]}}
+
+        example:
+          input: "Merchant Galvin looks nervous as you approach his shop in the marketplace."
+          output: ["Galvin", "merchant", "marketplace", "shop"]
+
+      explicit_query:
+        description: Use provided explicit_memory_query if available
+        priority: overrides_auto_generation
+
+    output: query_text (string, space-joined search terms)
+
+  step_2_determine_group_ids:
+    description: Determine which memory groups to search for this agent
+    logic: |
+      for each agent_id:
+        group_ids = [
+          agent_id,              # Personal player-layer memories
+          character_id,          # Character-layer memories
+          "campaign_main"        # Shared party memories
+        ]
+
+    example:
+      agent_id: "agent_alex_001"
+      character_id: "char_zara_001"
+      group_ids: ["agent_alex_001", "char_zara_001", "campaign_main"]
+
+  step_3_execute_graphiti_search:
+    description: Query Graphiti knowledge graph
+    api_call: |
+      results = await graphiti.search(
+          query=query_text,
+          group_ids=group_ids,
+          num_results=10,  # Configurable limit
+          # Temporal filtering handled in post-processing
+      )
+
+    temporal_filtering:
+      description: Filter results by temporal validity
+      logic: |
+        current_time = state["shared_party_state"]["days_elapsed"]
+        filtered_results = [
+            edge for edge in results
+            if edge.valid_at <= current_time and
+               (edge.invalid_at is None or edge.invalid_at > current_time)
+        ]
+
+  step_4_calculate_corruption:
+    description: Simulate memory corruption based on time and personality
+    for_each_memory:
+      - calculate_corruption_probability:
+          formula: |
+            personality_mod = personality.base_decay_rate * (1 + (0.5 - personality.detail_oriented))
+            time_factor = 1 - exp(-(days_since_event / 365))
+            importance_mod = 1.5 - memory.importance
+            rehearsal_mod = max(0, 1 - memory.rehearsal_count * 0.05)
+
+            probability = personality_mod * time_factor * importance_mod * rehearsal_mod * global_strength
+            probability = min(probability, 0.95)  # Cap at 95%
+
+      - apply_corruption_if_triggered:
+          random_roll: random.random() < probability
+          if_triggered:
+            - select_corruption_type:
+                weights:
+                  detail_drift: 0.4  # Small details change
+                  emotional_coloring: personality.emotional_memory  # Mood affects recall
+                  conflation: 0.2  # Blend with other memories
+                  simplification: 0.2  # Lose nuance
+                  false_confidence: 0.1  # Add invented details
+
+            - corrupt_fact:
+                method: llm_based_corruption
+                prompt: |
+                  Corrupt this memory according to the corruption type.
+                  Keep it plausible but introduce the specified error.
+
+                  ORIGINAL: {original_fact}
+                  CORRUPTION TYPE: {corruption_type}
+                  PERSONALITY: {emotional_memory if emotional_coloring else "N/A"}
+
+                  Return corrupted version that feels realistic.
+
+            - mark_as_corrupted:
+                corrupted: true
+                original_fact: original_fact_value
+                corruption_type: selected_type
+
+  step_5_build_results:
+    description: Format results into MemoryQueryResult objects
+    for_each_memory:
+      - temporal_context:
+          calculate: |
+            sessions_ago = current_session - memory.session_number
+            days_ago = current_days - memory.days_elapsed
+            temporal_context = f"{sessions_ago} sessions ago, Day {memory.days_elapsed}"
+
+      - source_attribution:
+          determine: |
+            if memory.episode_ids:
+              source = f"Session {memory.session_number} {memory.memory_type}"
+            else:
+              source = "Imported memory"
+
+      - build_result:
+          schema:
+            edge: memory (MemoryEdge object)
+            relevance_score: from Graphiti semantic search
+            temporal_context: calculated string
+            source_attribution: determined string
+            corrupted: bool from step 4
+            original_fact: if corrupted, else None
+
+  step_6_update_rehearsal_count:
+    description: Increment rehearsal_count for accessed memories
+    action: |
+      for each retrieved memory:
+        memory.rehearsal_count += 1
+        update_in_neo4j(memory.uuid, {"rehearsal_count": memory.rehearsal_count})
+
+    reasoning: |
+      Frequently accessed memories become more resistant to decay.
+      Rehearsal strengthens memory retention (psychological realism).
+
+# --- EXAMPLE INVOCATIONS ---
+examples:
+  - name: First Session - No Prior Memories
+    input:
+      current_phase: memory_query
+      turn_number: 1
+      dm_narration: "A goblin jumps from behind a tree, weapon drawn"
+      active_agents: ["agent_alex_001"]
+      shared_party_state:
+        session_number: 1
+        days_elapsed: 0
+      explicit_memory_query: null
+      # Agent config
+      agent_id: agent_alex_001
+      character_id: char_zara_001
+      player_personality:
+        detail_oriented: 0.8
+        emotional_memory: 0.4
+        base_decay_rate: 0.3
+      # Memory config
+      corruption_strength: 0.5
+
+    output:
+      retrieved_memories:
+        agent_alex_001: []  # No memories exist yet
+      memory_query_metadata:
+        agent_alex_001:
+          query_text: "goblin tree weapon attack"
+          total_results: 0
+          corrupted_count: 0
+          execution_time_ms: 150
+          group_ids_searched: ["agent_alex_001", "char_zara_001", "campaign_main"]
+      current_phase: strategic_intent
+      error_state: null
+
+  - name: Later Session - Memories Retrieved and Corrupted
+    input:
+      current_phase: memory_query
+      turn_number: 50
+      dm_narration: "Merchant Galvin looks nervous. 'I... I can't help you this time,' he stammers."
+      active_agents: ["agent_alex_001", "agent_morgan_002"]
+      shared_party_state:
+        session_number: 8
+        days_elapsed: 45
+      explicit_memory_query: null
+      # Agent configs
+      agent_id: agent_alex_001
+      player_personality:
+        detail_oriented: 0.8  # Good memory
+        emotional_memory: 0.4
+        base_decay_rate: 0.3
+      corruption_strength: 0.5
+
+    output:
+      retrieved_memories:
+        agent_alex_001:
+          - edge:
+              uuid: mem_001
+              fact: "Merchant Galvin sold us fuel cells at fair price in Session 3"
+              valid_at: 2025-10-10T14:00:00Z
+              session_number: 3
+              days_elapsed: 12
+              confidence: 0.95
+              importance: 0.7
+              rehearsal_count: 2  # Accessed twice before
+              corruption_type: null
+              original_uuid: null
+            relevance_score: 0.92
+            temporal_context: "5 sessions ago, Day 12"
+            source_attribution: "Session 3 DM narration"
+            corrupted: false  # High importance + rehearsal + detail-oriented = low corruption
+            original_fact: null
+
+          - edge:
+              uuid: mem_002
+              fact: "The marketplace had about 15 vendors"  # CORRUPTED (was 20)
+              valid_at: 2025-10-10T14:30:00Z
+              session_number: 3
+              days_elapsed: 12
+              confidence: 0.65
+              importance: 0.2  # Low importance
+              rehearsal_count: 0
+              corruption_type: detail_drift
+              original_uuid: mem_002_original
+            relevance_score: 0.75
+            temporal_context: "5 sessions ago, Day 12"
+            source_attribution: "Session 3 episodic"
+            corrupted: true
+            original_fact: "The marketplace had about 20 vendors"
+
+        agent_morgan_002:
+          - edge:
+              uuid: mem_003
+              fact: "Merchant Galvin seemed terrified of someone during last visit"  # CORRUPTED (was "nervous")
+              valid_at: 2025-10-15T10:00:00Z
+              session_number: 5
+              days_elapsed: 20
+              confidence: 0.7
+              importance: 0.6
+              rehearsal_count: 1
+              corruption_type: emotional_coloring
+              original_uuid: mem_003_original
+            relevance_score: 0.88
+            temporal_context: "3 sessions ago, Day 20"
+            source_attribution: "Session 5 semantic"
+            corrupted: true
+            original_fact: "Merchant Galvin seemed nervous about something during last visit"
+
+      memory_query_metadata:
+        agent_alex_001:
+          query_text: "Galvin merchant nervous help refuse"
+          total_results: 2
+          corrupted_count: 1
+          execution_time_ms: 320
+          group_ids_searched: ["agent_alex_001", "char_zara_001", "campaign_main"]
+        agent_morgan_002:
+          query_text: "Galvin merchant nervous help refuse"
+          total_results: 1
+          corrupted_count: 1
+          execution_time_ms: 280
+          group_ids_searched: ["agent_morgan_002", "char_kira_002", "campaign_main"]
+
+      current_phase: strategic_intent
+      error_state: null
+
+  - name: Explicit Query - DM Asks for Specific Memory
+    input:
+      current_phase: memory_query
+      turn_number: 100
+      dm_narration: "You return to the ancient temple ruins."
+      active_agents: ["agent_alex_001"]
+      shared_party_state:
+        session_number: 15
+        days_elapsed: 120
+      explicit_memory_query: "ancient temple ruins traps puzzles"
+      agent_id: agent_alex_001
+      player_personality:
+        detail_oriented: 0.8
+        base_decay_rate: 0.3
+      corruption_strength: 0.5
+
+    output:
+      retrieved_memories:
+        agent_alex_001:
+          - edge:
+              uuid: mem_050
+              fact: "The temple had pressure plate traps in the entry hall"
+              session_number: 6
+              days_elapsed: 30
+              confidence: 0.85
+              importance: 0.8  # Important safety information
+              rehearsal_count: 3
+            relevance_score: 0.95
+            temporal_context: "9 sessions ago, Day 30"
+            source_attribution: "Session 6 procedural"
+            corrupted: false  # High importance + rehearsal = resistant
+
+          - edge:
+              uuid: mem_051
+              fact: "We found a crystal key in the western chamber"  # CORRUPTED (was eastern)
+              session_number: 6
+              days_elapsed: 30
+              confidence: 0.6
+              importance: 0.5
+              rehearsal_count: 0
+              corruption_type: detail_drift
+            relevance_score: 0.82
+            temporal_context: "9 sessions ago, Day 30"
+            corrupted: true
+            original_fact: "We found a crystal key in the eastern chamber"
+
+      memory_query_metadata:
+        agent_alex_001:
+          query_text: "ancient temple ruins traps puzzles"  # Used explicit query
+          total_results: 2
+          corrupted_count: 1
+          execution_time_ms: 290
+          group_ids_searched: ["agent_alex_001", "char_zara_001", "campaign_main"]
+
+      current_phase: strategic_intent
+      error_state: null
+
+  - name: Error Recovery - Graphiti Unavailable
+    input:
+      current_phase: memory_query
+      turn_number: 25
+      dm_narration: "A dragon appears on the horizon"
+      active_agents: ["agent_alex_001"]
+      shared_party_state:
+        session_number: 5
+        days_elapsed: 25
+      # Graphiti connection fails
+
+    output:
+      retrieved_memories:
+        agent_alex_001: []  # Empty due to connection failure
+      memory_query_metadata:
+        agent_alex_001:
+          query_text: "dragon horizon appears"
+          total_results: 0
+          corrupted_count: 0
+          execution_time_ms: 50
+          group_ids_searched: []
+          error: "graphiti_connection_failed"
+      current_phase: strategic_intent
+      error_state: "graphiti_unavailable_proceeding_without_memories"
+
+# --- INTEGRATION NOTES ---
+integration_notes:
+  langgraph_integration: |
+    Implement as async LangGraph node with parallel agent queries:
+
+    ```python
+    async def memory_query_node(state: GameState) -> GameState:
+        # Generate search query
+        if state.get("explicit_memory_query"):
+            query_text = state["explicit_memory_query"]
+        else:
+            query_text = await generate_query_from_narration(
+                state["dm_narration"]
+            )
+
+        # Query memories for all agents in parallel
+        memory_tasks = []
+        for agent_id in state["active_agents"]:
+            task = query_agent_memories(
+                agent_id=agent_id,
+                query_text=query_text,
+                current_session=state["shared_party_state"]["session_number"],
+                current_days=state["shared_party_state"]["days_elapsed"]
+            )
+            memory_tasks.append((agent_id, task))
+
+        # Gather results
+        retrieved_memories = {}
+        metadata = {}
+        for agent_id, task in memory_tasks:
+            results, meta = await task
+            retrieved_memories[agent_id] = results
+            metadata[agent_id] = meta
+
+        return {
+            **state,
+            "retrieved_memories": retrieved_memories,
+            "memory_query_metadata": metadata,
+            "current_phase": "strategic_intent"
+        }
+    ```
+
+  graphiti_client_setup: |
+    Initialize Graphiti client with retry logic:
+
+    ```python
+    from graphiti_core import Graphiti
+    from tenacity import retry, stop_after_attempt, wait_exponential
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=4)
+    )
+    async def get_graphiti_client():
+        return Graphiti(
+            uri="bolt://localhost:7687",
+            user="neo4j",
+            password=os.getenv("NEO4J_PASSWORD"),
+            llm_client=openai_client
+        )
+    ```
+
+  corruption_simulation: |
+    Memory corruption adds realism but should be configurable:
+
+    ```python
+    def should_corrupt_memory(
+        memory: MemoryEdge,
+        current_days: int,
+        personality: PlayerPersonality,
+        global_strength: float
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Returns: (should_corrupt, corruption_type)
+        """
+        prob = calculate_corruption_probability(
+            memory, current_days, personality, global_strength
+        )
+
+        if random.random() < prob:
+            # Select corruption type
+            corruption_type = random.choices(
+                population=["detail_drift", "emotional_coloring", "conflation", "simplification"],
+                weights=[0.4, personality.emotional_memory, 0.2, 0.2]
+            )[0]
+            return True, corruption_type
+
+        return False, None
+    ```
+
+  temporal_queries: |
+    Support "What did we know at Session X?" queries:
+
+    ```python
+    async def query_memories_at_session(
+        agent_id: str,
+        query: str,
+        target_session: int
+    ):
+        """Query what agent knew at specific past session"""
+        # Get session timestamp
+        session_days = get_days_at_session(target_session)
+
+        # Filter memories by temporal validity
+        results = await graphiti.search(query, group_ids=[agent_id])
+        filtered = [
+            edge for edge in results
+            if edge.days_elapsed <= session_days
+        ]
+
+        return filtered
+    ```
+
+  rehearsal_tracking: |
+    Update rehearsal counts asynchronously to avoid blocking:
+
+    ```python
+    async def update_rehearsal_counts(memory_uuids: List[str]):
+        """Increment rehearsal count for accessed memories"""
+        driver = GraphDatabase.driver(...)
+        async with driver.session() as session:
+            await session.run(
+                """
+                UNWIND $uuids AS uuid
+                MATCH (e:Edge {uuid: uuid})
+                SET e.rehearsal_count = COALESCE(e.rehearsal_count, 0) + 1
+                """,
+                uuids=memory_uuids
+            )
+    ```
+
+# --- PERFORMANCE TARGETS ---
+performance_targets:
+  execution_time_p95: 1500  # milliseconds
+  execution_time_p50: 500
+  graphiti_search_timeout: 10000  # 10 seconds max
+  max_results_per_agent: 10
+  corruption_calculation_time: 50  # milliseconds per memory
+  parallel_agent_queries: true  # Query all agents simultaneously
+
+# --- RELATED REQUIREMENTS ---
+related_requirements:
+  functional:
+    - FR-005  # Memory storage timing
+    - FR-006  # Memory retrieval timing
+    - FR-007  # Memory query support
+    - FR-019  # Personal vs shared memory distinction
+
+  user_stories:
+    - US-003  # Memory persistence across sessions
+    - US-001  # Single AI player turn cycle
+    - US-005  # Multi-agent coordination (shared memories)
+
+  success_criteria:
+    - SC-003  # Accurate recall after 10+ sessions
+    - SC-010  # Spontaneous memory reference
+    - SC-013  # Memory retrieval accuracy without degradation

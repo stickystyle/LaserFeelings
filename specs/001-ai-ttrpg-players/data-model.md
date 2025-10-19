@@ -1,99 +1,118 @@
-# Data Models: AI TTRPG Player System
+# Data Model: AI TTRPG Player System
 
-**Date**: October 18, 2025
-**Status**: Phase 1 Design
-**Purpose**: Define core entities, validation rules, state transitions, and relationships
-
----
-
-## Overview
-
-This document specifies all data models for the AI TTRPG Player System using Pydantic 2.x for validation. Models are organized by domain layer.
+**Feature Branch**: `001-ai-ttrpg-players`
+**Created**: October 19, 2025
+**Status**: Complete
+**Purpose**: Define all data models, state structures, and validation rules for the AI TTRPG Player System
 
 ---
 
-## 1. Agent Layer Models
+## Table of Contents
 
-### 1.1 AgentPersonality
+1. [Core Entities](#core-entities)
+2. [LangGraph State Models](#langgraph-state-models)
+3. [Graphiti Memory Models](#graphiti-memory-models)
+4. [Configuration Models](#configuration-models)
+5. [Message & Communication Models](#message--communication-models)
+6. [Validation Models](#validation-models)
+7. [Relationship Diagrams](#relationship-diagrams)
+8. [Validation Rules](#validation-rules)
 
-**Purpose**: Define personality traits affecting strategic decision-making and memory corruption for base persona agents.
+---
+
+## Core Entities
+
+### 1. AI Player (Base Persona)
+
+The strategic decision-making layer operating out-of-character.
 
 ```python
-from pydantic import BaseModel, Field
-from typing import List
+from pydantic import BaseModel, Field, field_validator
+from typing import Literal
 from enum import Enum
 
-class PlayStyle(str, Enum):
-    CAUTIOUS = "cautious"
-    AGGRESSIVE = "aggressive"
-    DIPLOMATIC = "diplomatic"
-    CHAOTIC = "chaotic"
-    ANALYTICAL = "analytical"
+class PlayerPersonality(BaseModel):
+    """Personality traits affecting strategic decision-making"""
 
-class AgentPersonality(BaseModel):
-    """Base persona agent personality configuration"""
+    analytical_score: float = Field(
+        ge=0.0, le=1.0,
+        description="How analytical vs intuitive (0=pure gut, 1=pure logic)"
+    )
+    risk_tolerance: float = Field(
+        ge=0.0, le=1.0,
+        description="Willingness to take risks (0=cautious, 1=reckless)"
+    )
+    detail_oriented: float = Field(
+        ge=0.0, le=1.0,
+        description="Focus on details vs big picture (affects memory decay)"
+    )
+    emotional_memory: float = Field(
+        ge=0.0, le=1.0,
+        description="How much emotions color memories (0=factual, 1=mood-driven)"
+    )
+    assertiveness: float = Field(
+        ge=0.0, le=1.0,
+        description="Tendency to lead vs follow (0=follower, 1=leader)"
+    )
+    cooperativeness: float = Field(
+        ge=0.0, le=1.0,
+        description="Preference for teamwork vs solo action"
+    )
+    openness: float = Field(
+        ge=0.0, le=1.0,
+        description="Acceptance of new ideas vs traditional approaches"
+    )
+    rule_adherence: float = Field(
+        ge=0.0, le=1.0,
+        description="Respect for game rules vs creative interpretation"
+    )
+    roleplay_intensity: float = Field(
+        ge=0.0, le=1.0,
+        description="How much player stays in-character vs metagaming"
+    )
+    base_decay_rate: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Base memory corruption rate before modifiers"
+    )
 
-    # Identity
-    agent_id: str = Field(..., description="Unique agent identifier", pattern=r"^agent_[a-z0-9_]+$")
-    name: str = Field(..., description="Human-readable agent name", min_length=1, max_length=50)
+    class Config:
+        frozen = True  # Immutable after creation
 
-    # Core personality traits (0.0 to 1.0 scale)
-    risk_tolerance: float = Field(..., ge=0.0, le=1.0, description="Willingness to take risks")
-    analytical_score: float = Field(..., ge=0.0, le=1.0, description="Logical vs intuitive thinking")
-    emotional_memory: float = Field(..., ge=0.0, le=1.0, description="Emotional influence on recall")
-    detail_oriented: float = Field(..., ge=0.0, le=1.0, description="Attention to specifics")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Self-assuredness level")
 
-    # Strategic preferences
-    play_style: PlayStyle = Field(..., description="Primary gameplay approach")
-    preferred_tactics: List[str] = Field(default_factory=list, description="Favorite strategies")
+class AIPlayer(BaseModel):
+    """Strategic decision-making layer (the 'player')"""
 
-    # Memory corruption parameters
-    base_decay_rate: float = Field(default=0.3, ge=0.0, le=1.0, description="Baseline memory degradation")
+    agent_id: str = Field(
+        description="Unique identifier for this AI player",
+        pattern=r"^agent_[a-z0-9_]+$"
+    )
+    player_name: str = Field(
+        description="Human-readable player name (e.g., 'Alex', 'Morgan')"
+    )
+    personality: PlayerPersonality
+    player_goal: str = Field(
+        description="Out-of-character objective (e.g., 'Get character in crazy adventures')"
+    )
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "agent_id": "agent_alex_001",
-                "name": "Alex",
-                "risk_tolerance": 0.3,
-                "analytical_score": 0.8,
-                "emotional_memory": 0.4,
-                "detail_oriented": 0.9,
-                "confidence": 0.7,
-                "play_style": "cautious",
-                "preferred_tactics": ["stealth", "negotiation", "planning"],
-                "base_decay_rate": 0.2
-            }
-        }
-    }
-```
+    # Derived from personality
+    @property
+    def decision_style(self) -> str:
+        """Strategic preference based on personality"""
+        if self.personality.analytical_score > 0.7:
+            return "analytical_planner"
+        elif self.personality.risk_tolerance > 0.7:
+            return "bold_improviser"
+        elif self.personality.cooperativeness > 0.7:
+            return "team_coordinator"
+        else:
+            return "balanced_strategist"
 
-**Validation Rules**:
-- All scores must be in range [0.0, 1.0]
-- `agent_id` must follow pattern `agent_[name]_[number]`
-- `name` cannot be empty or exceed 50 characters
-- `preferred_tactics` can be empty list
+    class Config:
+        frozen = True
 
-**Relationships**:
-- 1:1 with BasePersonaAgent instance
-- 1:1 with CharacterSheet (paired player-character)
 
----
-
-### 1.2 CharacterSheet
-
-**Purpose**: Define in-character personality and attributes for character agents using Lasers & Feelings game system.
-
-**Reference**: See `lasers_and_feelings_rpg.pdf` and `56udLX.png` character sheet template.
-
-```python
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from enum import Enum
-
-class Style(str, Enum):
-    """Lasers & Feelings character archetypes"""
+class CharacterStyle(str, Enum):
+    """Canonical character archetypes from Lasers & Feelings"""
     ALIEN = "Alien"
     ANDROID = "Android"
     DANGEROUS = "Dangerous"
@@ -102,8 +121,9 @@ class Style(str, Enum):
     INTREPID = "Intrepid"
     SAVVY = "Savvy"
 
-class Role(str, Enum):
-    """Lasers & Feelings character roles/jobs"""
+
+class CharacterRole(str, Enum):
+    """Canonical character roles from Lasers & Feelings"""
     DOCTOR = "Doctor"
     ENVOY = "Envoy"
     ENGINEER = "Engineer"
@@ -112,745 +132,1345 @@ class Role(str, Enum):
     SCIENTIST = "Scientist"
     SOLDIER = "Soldier"
 
-class CharacterSheet(BaseModel):
-    """Character agent identity and personality (Lasers & Feelings system)"""
 
-    # Identity
-    character_id: str = Field(..., description="Unique character identifier", pattern=r"^char_[a-z0-9_]+$")
-    character_name: str = Field(..., description="In-game character name", min_length=1, max_length=50)
+class AICharacter(BaseModel):
+    """In-character roleplay layer (the 'character')"""
 
-    # Lasers & Feelings core attributes
-    style: Style = Field(..., description="Character archetype from L&F system")
-    role: Role = Field(..., description="Character job/function from L&F system")
-    number: int = Field(..., ge=2, le=5, description="Lasers (low) vs Feelings (high) balance")
+    character_id: str = Field(
+        description="Unique identifier for this character",
+        pattern=r"^char_[a-z0-9_]+$"
+    )
+    agent_id: str = Field(
+        description="Reference to controlling AI player"
+    )
 
-    # Goals (dual layer)
-    player_goal: str = Field(..., description="What player wants to do (OOC)", max_length=200)
-    character_goal: str = Field(..., description="What character wants (IC)", max_length=200)
+    # Lasers & Feelings character attributes
+    name: str = Field(description="Character name")
+    style: CharacterStyle = Field(description="Character archetype")
+    role: CharacterRole = Field(description="Character job/function")
+    number: int = Field(
+        ge=2, le=5,
+        description="Lasers (low) vs Feelings (high) balance"
+    )
+    character_goal: str = Field(
+        description="In-character motivation (e.g., 'Become Captain')"
+    )
+    equipment: list[str] = Field(
+        default_factory=list,
+        description="Items character carries"
+    )
 
-    # Equipment
-    equipment: List[str] = Field(default_factory=list, description="Items character carries", max_length=10)
+    # Derived personality traits
+    speech_patterns: list[str] = Field(
+        default_factory=list,
+        description="How character speaks (e.g., 'Speaks formally', 'Uses technical jargon')"
+    )
+    mannerisms: list[str] = Field(
+        default_factory=list,
+        description="Personality quirks (e.g., 'Taps fingers when anxious')"
+    )
 
-    # Derived roleplay attributes (from STYLE + ROLE)
-    speech_patterns: str = Field(..., description="How character speaks", max_length=200)
-    mannerisms: Optional[str] = Field(default=None, description="Physical mannerisms", max_length=200)
+    @property
+    def approach_bias(self) -> Literal["lasers", "feelings", "balanced"]:
+        """Determine preferred problem-solving approach from number"""
+        if self.number == 2:
+            return "lasers"  # Logical, technical
+        elif self.number == 5:
+            return "feelings"  # Intuitive, emotional
+        else:
+            return "balanced"
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "character_id": "char_zara_001",
-                "character_name": "Zara-7",
-                "style": "Android",
-                "role": "Engineer",
-                "number": 3,
-                "player_goal": "Get involved in crazy space adventures and make best of them",
-                "character_goal": "Understand human emotions and prove worth to crew",
-                "equipment": ["Repair kit", "Multitool", "Emergency beacon"],
-                "speech_patterns": "Precise, formal language. Uses technical jargon. Asks clarifying questions.",
-                "mannerisms": "Tilts head when confused. Pauses before emotional responses."
-            }
-        }
-    }
+    @field_validator('speech_patterns', 'mannerisms', mode='before')
+    @classmethod
+    def ensure_list(cls, v):
+        if v is None:
+            return []
+        return v
+
+    class Config:
+        use_enum_values = True
+
+
+class SharedPartyState(BaseModel):
+    """State shared among all AI players in the party"""
+
+    ship_name: str = Field(default="The Raptor")
+    ship_strengths: list[str] = Field(
+        default_factory=list,
+        description="What the ship is good at"
+    )
+    ship_problem: str | None = Field(
+        default=None,
+        description="Current ship malfunction or issue"
+    )
+    party_norms: list[str] = Field(
+        default_factory=list,
+        description="Emergent party culture patterns (e.g., 'Always split treasure evenly')"
+    )
+    session_number: int = Field(
+        default=1, ge=1,
+        description="Current session in campaign"
+    )
+    days_elapsed: int = Field(
+        default=0, ge=0,
+        description="In-game days since campaign start"
+    )
 ```
-
-**Validation Rules**:
-- `character_id` must follow pattern `char_[name]_[number]`
-- `style` must be one of canonical L&F styles
-- `role` must be one of canonical L&F roles
-- `number` must be integer 2-5 (per L&F rules)
-- `equipment` list max 10 items
-- `player_goal` and `character_goal` max 200 characters
-
-**Game Mechanics Integration**:
-- **number = 2**: Better at Lasers (logic/tech). Roll 1d6 under 2 for Lasers tasks, over 2 for Feelings tasks
-- **number = 3**: Balanced. Roll under 3 for Lasers, over 3 for Feelings
-- **number = 4**: Balanced. Roll under 4 for Lasers, over 4 for Feelings
-- **number = 5**: Better at Feelings (emotion/intuition). Roll under 5 for Lasers, over 5 for Feelings
-- **Rolling exactly your number**: Success with a twist/complication
-
-**Relationships**:
-- 1:1 with CharacterAgent instance
-- 1:1 with AgentPersonality (paired player-character)
 
 ---
 
-### 1.3 ShipState
+## LangGraph State Models
 
-**Purpose**: Define shared party ship state from Lasers & Feelings system.
+### Turn Phase State
 
-**Reference**: See `56udLX.png` character sheet template - "YOUR SHIP" section.
+```python
+from typing import TypedDict, Literal, NotRequired
+from datetime import datetime
+
+class GameState(TypedDict):
+    """Root state for LangGraph turn cycle"""
+
+    # Phase tracking
+    current_phase: Literal[
+        "dm_narration",
+        "memory_query",
+        "strategic_intent",
+        "ooc_discussion",
+        "consensus_detection",
+        "character_action",
+        "validation",
+        "dm_adjudication",
+        "dice_resolution",
+        "dm_outcome",
+        "character_reaction",
+        "memory_storage"
+    ]
+    phase_start_time: datetime
+    turn_number: int
+
+    # DM input
+    dm_narration: str
+    dm_adjudication_needed: bool
+    dice_override: NotRequired[int | None]  # Optional DM override for dice
+    dm_outcome: NotRequired[str]
+
+    # Active agents
+    active_agents: list[str]  # List of agent_ids participating
+
+    # Strategic layer (player level)
+    strategic_intents: dict[str, str]  # agent_id -> intent
+    ooc_messages: list[dict]  # Strategic discussion messages
+    consensus_state: NotRequired[Literal["unanimous", "majority", "conflicted", "timeout"]]
+
+    # Character layer (roleplay level)
+    character_actions: dict[str, str]  # character_id -> action
+    character_reactions: dict[str, str]  # character_id -> reaction
+
+    # Validation state
+    validation_attempt: int
+    validation_valid: bool
+    validation_failures: dict[str, list[str]]  # character_id -> violations
+
+    # Memory retrieval
+    retrieved_memories: dict[str, list[dict]]  # agent_id -> memory list
+
+    # Dice resolution
+    dice_action_character: NotRequired[str]  # Which character is rolling
+    dice_task_type: NotRequired[Literal["lasers", "feelings"]]
+    dice_result: NotRequired[int]
+    dice_success: NotRequired[bool]
+
+    # Error handling
+    error_state: NotRequired[str | None]
+    retry_count: int
+    rollback_phase: NotRequired[str | None]
+
+
+class MemoryQueryState(TypedDict):
+    """State specific to memory query phase"""
+
+    agent_id: str
+    query_text: str
+    temporal_constraint: NotRequired[dict]  # {session_start, session_end}
+    limit: int
+    results: NotRequired[list[dict]]
+
+
+class ValidationState(TypedDict):
+    """State specific to validation phase"""
+
+    character_id: str
+    action_text: str
+    attempt: int
+    valid: bool
+    violations: list[str]
+    forbidden_patterns: list[str]
+    suggestion: str | None
+    previous_violation: str | None
+
+
+class ConsensusState(TypedDict):
+    """State specific to consensus detection"""
+
+    messages: list[dict]
+    agents: list[str]
+    positions: dict[str, dict]  # agent_id -> {stance, confidence}
+    result: Literal["unanimous", "majority", "conflicted", "timeout"]
+    round_count: int
+    start_time: datetime
+```
+
+---
+
+## Graphiti Memory Models
+
+### Neo4j Schema Extensions
 
 ```python
 from pydantic import BaseModel, Field
-from typing import List
-
-class ShipState(BaseModel):
-    """Shared party ship state (Lasers & Feelings system)"""
-
-    # Ship identity
-    ship_name: str = Field(default="The Raptor", description="Ship name", max_length=50)
-
-    # Ship attributes
-    strengths: List[str] = Field(default_factory=list, description="What ship is good at", max_length=5)
-    problem: str = Field(..., description="Current ship malfunction or issue", max_length=200)
-
-    # Metadata
-    last_updated_session: int = Field(..., ge=1, description="Session when ship state last changed")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "ship_name": "The Raptor",
-                "strengths": ["Fast", "Well-armed", "Cloaking device"],
-                "problem": "Life support system failing - 48 hours of air remaining",
-                "last_updated_session": 1
-            }
-        }
-    }
-```
-
-**Validation Rules**:
-- `ship_name` max 50 characters
-- `strengths` list max 5 items
-- `problem` max 200 characters (should be concise, pressing issue)
-- `last_updated_session` must be positive integer
-
-**Design Notes**:
-- Ship state is **shared** across all party members and influences strategic decisions
-- Ship `problem` creates party-wide pressure and drives adventure hooks
-- Strengths provide narrative options for creative solutions
-- DM can update ship state during gameplay to introduce new complications
-
-**Relationships**:
-- Shared by all CharacterSheet instances in the party
-- Referenced during strategic planning (OOC discussion phase)
-- May influence memory queries ("Can our ship handle atmospheric entry?")
-
----
-
-## 2. Memory Layer Models
-
-### 2.1 MemoryEdge
-
-**Purpose**: Represent temporal knowledge graph edges with corruption metadata.
-
-```python
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
 from datetime import datetime
 from enum import Enum
-import uuid
 
 class MemoryType(str, Enum):
-    EPISODIC = "episodic"      # Specific events
-    SEMANTIC = "semantic"       # General knowledge
-    PROCEDURAL = "procedural"   # How-to knowledge
+    """Types of memory stored"""
+    EPISODIC = "episodic"  # Session-based events
+    SEMANTIC = "semantic"  # Facts about world, NPCs
+    PROCEDURAL = "procedural"  # Strategies, patterns
+
 
 class CorruptionType(str, Enum):
-    DETAIL_DRIFT = "detail_drift"
-    EMOTIONAL_COLORING = "emotional_coloring"
-    CONFLATION = "conflation"
-    SIMPLIFICATION = "simplification"
-    FALSE_CONFIDENCE = "false_confidence"
+    """Types of memory corruption"""
+    DETAIL_DRIFT = "detail_drift"  # Small details change
+    EMOTIONAL_COLORING = "emotional_coloring"  # Mood affects recall
+    CONFLATION = "conflation"  # Memories blend
+    SIMPLIFICATION = "simplification"  # Nuance lost
+    FALSE_CONFIDENCE = "false_confidence"  # Add invented details
+
 
 class MemoryEdge(BaseModel):
-    """Temporal memory graph edge with corruption tracking"""
+    """Extended Graphiti Edge with custom properties"""
 
-    # Identity
-    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique edge ID")
-    fact: str = Field(..., description="Memory content", min_length=1, max_length=1000)
+    # Core Graphiti fields
+    uuid: str
+    fact: str
+    valid_at: datetime
+    invalid_at: datetime | None = None
+    episode_ids: list[str]
+    source_node_uuid: str
+    target_node_uuid: str
 
-    # Temporal metadata
-    valid_at: datetime = Field(..., description="When memory became valid")
-    invalid_at: Optional[datetime] = Field(default=None, description="When memory was invalidated")
-    session_number: int = Field(..., ge=1, description="Game session when created")
-    days_elapsed: int = Field(..., ge=0, description="In-game days since campaign start")
+    # Custom TTRPG fields
+    agent_id: str = Field(
+        description="Which agent owns this memory (group_id in Graphiti)"
+    )
+    memory_type: MemoryType
+    session_number: int = Field(ge=1)
+    days_elapsed: int = Field(ge=0, description="In-game time when memory formed")
 
-    # Corruption metadata
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Memory certainty score")
-    corruption_type: Optional[CorruptionType] = Field(default=None, description="Type of corruption applied")
-    original_uuid: Optional[str] = Field(default=None, description="UUID of uncorrupted original")
+    # Memory quality metadata
+    confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0,
+        description="Certainty score (1.0=fresh, decreases with corruption)"
+    )
+    importance: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Event significance (affects decay rate)"
+    )
+    rehearsal_count: int = Field(
+        default=0, ge=0,
+        description="How often memory has been accessed (resists decay)"
+    )
 
-    # Memory strength
-    importance: float = Field(default=0.5, ge=0.0, le=1.0, description="Event significance")
-    rehearsal_count: int = Field(default=0, ge=0, description="Times memory accessed")
-    emotional_weight: float = Field(default=0.5, ge=0.0, le=1.0, description="Emotional intensity")
+    # Corruption tracking
+    corruption_type: CorruptionType | None = None
+    original_uuid: str | None = Field(
+        default=None,
+        description="Reference to uncorrupted edge (if this is corrupted)"
+    )
+    corruption_probability: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Calculated probability this memory is corrupted"
+    )
 
-    # Categorization
-    memory_type: MemoryType = Field(..., description="Memory category")
 
-    # Graph relationships (stored as references)
-    source_episode_id: str = Field(..., description="Episode UUID this memory came from")
-    related_entities: List[str] = Field(default_factory=list, description="Related entity UUIDs")
+class MemoryNode(BaseModel):
+    """Extended Graphiti Node for entities"""
 
-    @field_validator("invalid_at")
+    # Core Graphiti fields
+    uuid: str
+    name: str
+    labels: list[str]  # e.g., ["NPC", "Person"], ["Location", "Tavern"]
+
+    # Custom TTRPG fields
+    entity_type: Literal["npc", "location", "item", "quest", "faction"]
+    first_seen_session: int
+    last_seen_session: int
+    relationship_strength: dict[str, float] = Field(
+        default_factory=dict,
+        description="agent_id -> relationship score (-1 to 1)"
+    )
+
+
+class EpisodeMetadata(BaseModel):
+    """Metadata for game session episodes"""
+
+    episode_id: str
+    session_number: int
+    name: str  # e.g., "Session 5: The Merchant's Gambit"
+    reference_time: datetime  # When session occurred in real life
+    in_game_days_elapsed: int  # In-game time at session start
+    turn_count: int
+    group_id: str  # "campaign_main" for shared memories
+
+    # Session summary
+    key_events: list[str] = Field(default_factory=list)
+    npcs_introduced: list[str] = Field(default_factory=list)
+    locations_visited: list[str] = Field(default_factory=list)
+```
+
+### Memory Query Patterns
+
+```python
+from typing import Literal
+
+class MemoryQuery(BaseModel):
+    """Query structure for memory retrieval"""
+
+    agent_id: str = Field(
+        description="Which agent's memories to query"
+    )
+    query_text: str = Field(
+        description="Semantic search query"
+    )
+
+    # Temporal constraints
+    session_start: int | None = Field(
+        default=None,
+        description="Start of session range (inclusive)"
+    )
+    session_end: int | None = Field(
+        default=None,
+        description="End of session range (inclusive)"
+    )
+
+    # Filters
+    memory_types: list[MemoryType] | None = None
+    entity_types: list[str] | None = None
+    min_confidence: float = Field(default=0.3, ge=0.0, le=1.0)
+    min_importance: float | None = None
+
+    # Result constraints
+    limit: int = Field(default=5, ge=1, le=50)
+    include_corrupted: bool = Field(
+        default=True,
+        description="Whether to include potentially corrupted memories"
+    )
+
+    class Config:
+        use_enum_values = True
+
+
+class MemoryQueryResult(BaseModel):
+    """Result from memory retrieval"""
+
+    edge: MemoryEdge
+    relevance_score: float = Field(
+        ge=0.0, le=1.0,
+        description="How relevant to query (from semantic search)"
+    )
+    temporal_context: str = Field(
+        description="Human-readable time context (e.g., '3 sessions ago, Day 15')"
+    )
+    source_attribution: str = Field(
+        description="Where memory came from (e.g., 'Session 5 DM narration')"
+    )
+    corrupted: bool = Field(
+        default=False,
+        description="Whether this memory was corrupted during retrieval"
+    )
+    original_fact: str | None = Field(
+        default=None,
+        description="Original fact if corrupted=True"
+    )
+```
+
+---
+
+## Configuration Models
+
+### Character Configuration (characters.json)
+
+```python
+class CharacterConfig(BaseModel):
+    """Configuration for one AI player-character pair"""
+
+    # Player layer configuration
+    player: dict = Field(
+        description="Player personality configuration"
+    )
+
+    # Character layer configuration
+    character: dict = Field(
+        description="Lasers & Feelings character attributes"
+    )
+
+    @field_validator('player')
     @classmethod
-    def validate_temporal_consistency(cls, v: Optional[datetime], info) -> Optional[datetime]:
-        """Ensure invalid_at > valid_at if set"""
-        if v is not None and "valid_at" in info.data:
-            if v <= info.data["valid_at"]:
-                raise ValueError("invalid_at must be after valid_at")
+    def validate_player(cls, v):
+        """Ensure player config has required fields"""
+        required = [
+            'agent_id', 'player_name', 'player_goal',
+            'analytical_score', 'risk_tolerance', 'detail_oriented',
+            'emotional_memory', 'assertiveness', 'cooperativeness',
+            'openness', 'rule_adherence', 'roleplay_intensity'
+        ]
+        for field in required:
+            if field not in v:
+                raise ValueError(f"Missing required player field: {field}")
         return v
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "uuid": "550e8400-e29b-41d4-a716-446655440000",
-                "fact": "The merchant offered 50 gold pieces for the quest",
-                "valid_at": "2025-01-15T10:30:00",
-                "invalid_at": None,
-                "session_number": 3,
-                "days_elapsed": 15,
-                "confidence": 1.0,
-                "corruption_type": None,
-                "original_uuid": None,
-                "importance": 0.7,
-                "rehearsal_count": 0,
-                "emotional_weight": 0.3,
-                "memory_type": "episodic",
-                "source_episode_id": "episode_003",
-                "related_entities": ["merchant_galvin", "quest_dragon_hunt"]
-            }
-        }
-    }
+    @field_validator('character')
+    @classmethod
+    def validate_character(cls, v):
+        """Ensure character config has required fields"""
+        required = [
+            'character_id', 'name', 'style', 'role',
+            'number', 'character_goal', 'equipment'
+        ]
+        for field in required:
+            if field not in v:
+                raise ValueError(f"Missing required character field: {field}")
+
+        # Validate number range
+        if not 2 <= v['number'] <= 5:
+            raise ValueError(f"Character number must be 2-5, got {v['number']}")
+
+        # Validate style
+        if v['style'] not in [s.value for s in CharacterStyle]:
+            raise ValueError(f"Invalid style: {v['style']}")
+
+        # Validate role
+        if v['role'] not in [r.value for r in CharacterRole]:
+            raise ValueError(f"Invalid role: {v['role']}")
+
+        return v
+
+
+class CampaignConfig(BaseModel):
+    """Root configuration for campaign"""
+
+    campaign_name: str
+    dm_name: str
+
+    # Shared party state
+    party: dict = Field(
+        description="Ship and party-wide configuration"
+    )
+
+    # AI player-character pairs
+    characters: list[CharacterConfig]
+
+    # Memory settings
+    corruption_strength: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Global memory corruption rate (0=none, 1=maximum)"
+    )
+
+    @field_validator('characters')
+    @classmethod
+    def validate_character_count(cls, v):
+        if not 1 <= len(v) <= 4:
+            raise ValueError(f"Must have 1-4 AI players, got {len(v)}")
+        return v
+
+    @field_validator('party')
+    @classmethod
+    def validate_party(cls, v):
+        required = ['ship_name', 'ship_strengths']
+        for field in required:
+            if field not in v:
+                raise ValueError(f"Missing required party field: {field}")
+        return v
 ```
 
-**Validation Rules**:
-- `invalid_at` must be after `valid_at` if set
-- `session_number` must be positive integer
-- `days_elapsed` must be non-negative
-- All probability scores in range [0.0, 1.0]
+### Example characters.json
 
-**State Transitions**:
-- **Created**: `valid_at` set, `invalid_at` None, `confidence` 1.0
-- **Corrupted**: New edge created with `corruption_type` set, `original_uuid` points to original
-- **Invalidated**: `invalid_at` set to current time
-- **Rehearsed**: `rehearsal_count` incremented on each query
-
-**Relationships**:
-- Links to Episode nodes in Neo4j
-- Links to Entity nodes (NPCs, locations, items)
-- References original MemoryEdge if corrupted
+```json
+{
+  "campaign_name": "Voyage of the Raptor",
+  "dm_name": "Ryan",
+  "party": {
+    "ship_name": "The Raptor",
+    "ship_strengths": ["Fast", "Maneuverable", "Well-armed"],
+    "ship_problem": "Fuel cells depleting rapidly"
+  },
+  "corruption_strength": 0.5,
+  "characters": [
+    {
+      "player": {
+        "agent_id": "agent_alex_001",
+        "player_name": "Alex",
+        "player_goal": "Get character involved in crazy space adventures",
+        "analytical_score": 0.7,
+        "risk_tolerance": 0.6,
+        "detail_oriented": 0.8,
+        "emotional_memory": 0.4,
+        "assertiveness": 0.6,
+        "cooperativeness": 0.7,
+        "openness": 0.8,
+        "rule_adherence": 0.7,
+        "roleplay_intensity": 0.9
+      },
+      "character": {
+        "character_id": "char_zara_001",
+        "name": "Zara-7",
+        "style": "Android",
+        "role": "Engineer",
+        "number": 2,
+        "character_goal": "Understand human emotions",
+        "equipment": ["Multi-tool", "Diagnostic scanner", "Spare circuits"],
+        "speech_patterns": [
+          "Speaks formally and precisely",
+          "Uses technical jargon",
+          "Asks clarifying questions about emotions"
+        ],
+        "mannerisms": [
+          "Tilts head when confused",
+          "Pauses before expressing opinions",
+          "Observes humans intently"
+        ]
+      }
+    }
+  ]
+}
+```
 
 ---
 
-### 2.2 CorruptionConfig
+## Message & Communication Models
 
-**Purpose**: Configuration for memory corruption system.
-
-```python
-from pydantic import BaseModel, Field
-
-class CorruptionConfig(BaseModel):
-    """Memory corruption system configuration"""
-
-    # Global settings
-    enabled: bool = Field(default=True, description="Enable/disable corruption")
-    global_strength: float = Field(default=0.5, ge=0.0, le=1.0, description="Overall corruption intensity")
-    min_days_for_corruption: int = Field(default=7, ge=0, description="Minimum days before corruption applies")
-
-    # Corruption probability modifiers
-    importance_weight: float = Field(default=0.2, ge=0.0, le=1.0, description="Importance factor in probability")
-    rehearsal_resistance: float = Field(default=0.05, ge=0.0, le=0.2, description="Resistance per rehearsal")
-
-    # LLM settings for corruption generation
-    corruption_model: str = Field(default="gpt-4o-mini-2024-07-18", description="LLM model for corruption")
-    corruption_temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="LLM temperature")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "enabled": True,
-                "global_strength": 0.5,
-                "min_days_for_corruption": 7,
-                "importance_weight": 0.2,
-                "rehearsal_resistance": 0.05,
-                "corruption_model": "gpt-4o-mini-2024-07-18",
-                "corruption_temperature": 0.7
-            }
-        }
-    }
-```
-
----
-
-## 3. Orchestration Layer Models
-
-### 3.1 GameState
-
-**Purpose**: Represent complete game state for LangGraph state machine.
+### Three-Channel Message System
 
 ```python
-from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
-from datetime import datetime
 from enum import Enum
 
-class GamePhase(str, Enum):
-    SESSION_START = "session_start"
-    DM_NARRATION = "dm_narration"
-    MEMORY_RETRIEVAL = "memory_retrieval"
-    OOC_DISCUSSION = "ooc_discussion"
-    STRATEGIC_INTENT = "strategic_intent"
-    P2C_DIRECTIVE = "p2c_directive"
-    CHARACTER_ACTION = "character_action"
-    VALIDATION_CHECK = "validation_check"
-    DM_ADJUDICATION = "dm_adjudication"
-    DICE_RESOLUTION = "dice_resolution"
-    DM_OUTCOME = "dm_outcome"
-    CHARACTER_REACTION = "character_reaction"
-    MEMORY_CONSOLIDATION = "memory_consolidation"
-    SESSION_END = "session_end"
-
-class GameState(BaseModel):
-    """Complete game state for turn-based orchestration"""
-
-    # Session tracking
-    session_number: int = Field(..., ge=1, description="Current session number")
-    turn_number: int = Field(..., ge=1, description="Turn within current session")
-    current_phase: GamePhase = Field(..., description="Current turn phase")
-
-    # Time tracking
-    days_elapsed: int = Field(..., ge=0, description="In-game days since campaign start")
-    current_timestamp: datetime = Field(..., description="Real-world time")
-
-    # Active state
-    dm_narration: str = Field(default="", description="DM's scene description")
-    active_scene: str = Field(default="", description="Current scene name")
-    location: str = Field(default="", description="Current location")
-
-    # Agent states (keyed by agent_id)
-    agent_states: Dict[str, dict] = Field(default_factory=dict, description="Base persona states")
-    character_states: Dict[str, dict] = Field(default_factory=dict, description="Character agent states")
-
-    # Turn accumulation
-    ooc_messages: List[dict] = Field(default_factory=list, description="Out-of-character discussion")
-    strategic_intents: Dict[str, dict] = Field(default_factory=dict, description="Player strategic decisions")
-    character_actions: Dict[str, dict] = Field(default_factory=dict, description="Character actions")
-    validation_results: Dict[str, dict] = Field(default_factory=dict, description="Validation outcomes")
-
-    # Memory updates pending
-    memory_updates: List[dict] = Field(default_factory=list, description="Memory writes to batch")
-
-    # Consensus state
-    consensus_state: Optional[str] = Field(default=None, description="OOC consensus status")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "session_number": 1,
-                "turn_number": 5,
-                "current_phase": "character_action",
-                "days_elapsed": 3,
-                "current_timestamp": "2025-10-18T14:30:00",
-                "dm_narration": "A goblin leaps from behind the tree",
-                "active_scene": "Forest Ambush",
-                "location": "Darkwood Forest",
-                "agent_states": {},
-                "character_states": {},
-                "ooc_messages": [],
-                "strategic_intents": {},
-                "character_actions": {},
-                "validation_results": {},
-                "memory_updates": [],
-                "consensus_state": None
-            }
-        }
-    }
-```
-
-**Validation Rules**:
-- `session_number` and `turn_number` must be positive
-- `days_elapsed` must be non-negative
-- Phase must be valid enum value
-
-**State Transitions**:
-Defined by `GamePhase` enum sequential flow:
-
-```
-SESSION_START
-↓
-DM_NARRATION
-↓
-MEMORY_RETRIEVAL
-↓
-OOC_DISCUSSION → (consensus detection)
-  ├─ UNANIMOUS → STRATEGIC_INTENT
-  ├─ MAJORITY → STRATEGIC_INTENT
-  └─ CONFLICTED → continue OOC_DISCUSSION or TIMEOUT
-↓
-STRATEGIC_INTENT
-↓
-P2C_DIRECTIVE
-↓
-CHARACTER_ACTION
-↓
-VALIDATION_CHECK → (validation retry)
-  ├─ VALID → DM_ADJUDICATION
-  ├─ RETRY → CHARACTER_ACTION (up to 3 attempts)
-  └─ FAIL → DM_ADJUDICATION (with warning)
-↓
-DM_ADJUDICATION
-↓
-DICE_RESOLUTION (if needed)
-↓
-DM_OUTCOME
-↓
-CHARACTER_REACTION
-↓
-MEMORY_CONSOLIDATION
-↓
-[loop to DM_NARRATION or SESSION_END]
-```
-
----
-
-### 3.2 Message
-
-**Purpose**: Represent routed communication between agents with channel-based visibility.
-
-```python
-from pydantic import BaseModel, Field
-from typing import List
-from datetime import datetime
-from enum import Enum
-import uuid
-
-class Channel(str, Enum):
-    IC = "in_character"          # Character roleplay
-    OOC = "out_of_character"     # Strategic discussion
+class MessageChannel(str, Enum):
+    """Communication channels with different visibility rules"""
+    IC = "in_character"  # Characters see, players get summary
+    OOC = "out_of_character"  # Only players see
     P2C = "player_to_character"  # Private directive
 
-class MessageType(str, Enum):
-    NARRATION = "narration"
-    DIALOGUE = "dialogue"
-    ACTION = "action"
-    REACTION = "reaction"
-    DISCUSSION = "discussion"
-    DIRECTIVE = "directive"
 
 class Message(BaseModel):
-    """Routed message with channel-based visibility"""
+    """Base message structure for all communications"""
 
-    # Identity
-    message_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique message ID")
-    timestamp: datetime = Field(default_factory=datetime.now, description="When message created")
-
-    # Routing
-    channel: Channel = Field(..., description="Communication channel")
-    from_agent: str = Field(..., description="Sending agent ID")
-    to_agents: List[str] = Field(default_factory=list, description="Recipients (empty = broadcast)")
-
-    # Content
-    content: str = Field(..., description="Message content", min_length=1, max_length=2000)
-    message_type: MessageType = Field(..., description="Message category")
+    message_id: str = Field(
+        description="Unique message identifier"
+    )
+    channel: MessageChannel
+    from_agent: str = Field(
+        description="Sender agent_id or 'dm'"
+    )
+    to_agents: list[str] | None = Field(
+        default=None,
+        description="Recipient agent_ids (None = broadcast)"
+    )
+    content: str
+    timestamp: datetime
 
     # Metadata
-    turn_number: int = Field(..., ge=1, description="Turn this message belongs to")
-    phase: GamePhase = Field(..., description="Phase when message created")
+    turn_number: int | None = None
+    session_number: int | None = None
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "message_id": "msg_550e8400",
-                "timestamp": "2025-10-18T14:30:15",
-                "channel": "ic",
-                "from_agent": "char_thrain_001",
-                "to_agents": [],
-                "content": "I charge at the goblin with my sword raised!",
-                "message_type": "action",
-                "turn_number": 5,
-                "phase": "character_action"
-            }
-        }
-    }
+    class Config:
+        use_enum_values = True
+
+
+class DirectiveMessage(BaseModel):
+    """Player-to-character directive (one-way communication)"""
+
+    from_player: str = Field(description="Player agent_id")
+    to_character: str = Field(description="Character character_id")
+    strategic_directive: str = Field(
+        description="High-level instruction to character"
+    )
+    scene_context: str = Field(
+        description="Relevant scene information for interpretation"
+    )
+    timestamp: datetime
+
+    # Interpretation tracking
+    interpreted_as: str | None = Field(
+        default=None,
+        description="How character interpreted directive (filled after action)"
+    )
+
+
+class ICMessageSummary(BaseModel):
+    """Summary of IC action for player layer visibility"""
+
+    character_id: str
+    action_summary: str = Field(
+        description="High-level summary of what character did"
+    )
+    outcome_summary: str | None = Field(
+        default=None,
+        description="DM-narrated result (if available)"
+    )
+    turn_number: int
+    timestamp: datetime
 ```
 
-**Visibility Rules** (enforced by MessageRouter):
+### Visibility Rules
 
-| Channel | Characters See | Base Personas See |
-|---------|---------------|-------------------|
-| IC      | Full access   | Summary only      |
-| OOC     | No access     | Full access       |
-| P2C     | Recipient only | No access        |
+```python
+# Visibility matrix enforced at routing layer
+VISIBILITY_RULES = {
+    MessageChannel.IC: {
+        "characters": True,  # Full access
+        "base_personas": "summary_only"  # Filtered view via ICMessageSummary
+    },
+    MessageChannel.OOC: {
+        "characters": False,  # No access
+        "base_personas": True  # Full access
+    },
+    MessageChannel.P2C: {
+        "characters": "recipient_only",  # Only target character
+        "base_personas": False  # No access (one-way)
+    }
+}
+```
 
 ---
 
-### 3.3 ValidationResult
+## Validation Models
 
-**Purpose**: Represent validation outcome with retry tracking.
+### Narrative Overreach Detection
 
 ```python
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Pattern
+import re
 
 class ValidationResult(BaseModel):
-    """Validation outcome with retry escalation"""
+    """Result from action validation"""
 
-    # Result
-    valid: bool = Field(..., description="Whether action passed validation")
-    attempt: int = Field(..., ge=1, le=3, description="Attempt number (1-3)")
+    valid: bool
+    violations: list[str] = Field(default_factory=list)
+    forbidden_patterns: list[str] = Field(default_factory=list)
+    suggestion: str | None = None
 
-    # If invalid
-    violation: Optional[str] = Field(default=None, description="What rule was violated")
-    forbidden_pattern: Optional[str] = Field(default=None, description="Regex pattern matched")
-    suggestion: Optional[str] = Field(default=None, description="How to fix")
+    # Validation metadata
+    method: Literal["pattern", "llm", "hybrid"] = "pattern"
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
-    # Final action
-    action: str = Field(..., description="Validated or auto-fixed action text")
-    auto_fixed: bool = Field(default=False, description="Whether auto-correction applied")
-    warning_flag: bool = Field(default=False, description="Flag for DM review")
 
-    @field_validator("violation", "forbidden_pattern", "suggestion")
-    @classmethod
-    def validate_invalid_fields(cls, v: Optional[str], info) -> Optional[str]:
-        """If invalid, violation should be set"""
-        if not info.data.get("valid") and v is None and info.field_name == "violation":
-            raise ValueError("violation must be set when valid=False")
-        return v
+# Forbidden outcome language patterns
+FORBIDDEN_PATTERNS: list[tuple[Pattern, str]] = [
+    (re.compile(r'\bsuccessfully\b', re.IGNORECASE), "Successfully"),
+    (re.compile(r'\bmanages? to\b', re.IGNORECASE), "Manages to"),
+    (re.compile(r'\bkills?\b', re.IGNORECASE), "Kills"),
+    (re.compile(r'\bhits?\b', re.IGNORECASE), "Hits"),
+    (re.compile(r'\bstrikes?\b', re.IGNORECASE), "Strikes"),
+    (re.compile(r'\bdefeats?\b', re.IGNORECASE), "Defeats"),
+    (re.compile(r'\bthe .+ (falls?|dies?|collapses?)\b', re.IGNORECASE), "Outcome narration"),
+    (re.compile(r'\b(he|she|it|they) (die|dies|falls?|collapses?)\b', re.IGNORECASE), "Entity outcome"),
+    (re.compile(r'\b(my|the) .+ (works?|succeeds?)\b', re.IGNORECASE), "Success statement"),
+]
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "valid": False,
-                "attempt": 2,
-                "violation": "Contains outcome language",
-                "forbidden_pattern": "\\bkills?\\b",
-                "suggestion": "State intention only, not outcome",
-                "action": "I swing my sword at the goblin, aiming for its shoulder",
-                "auto_fixed": False,
-                "warning_flag": False
-            }
-        }
-    }
+
+class ValidationPromptTemplate(BaseModel):
+    """Template for progressive validation prompts"""
+
+    attempt: int = Field(ge=1, le=3)
+    base_constraints: str
+    strictness_level: Literal["lenient", "strict", "draconian"]
+    previous_violation: str | None = None
+
+    def build_prompt(self, directive: str, scene_context: str) -> str:
+        """Build character prompt with appropriate strictness"""
+
+        base = f"""
+You are a TTRPG character receiving a directive from your player.
+
+PLAYER'S DIRECTIVE: "{directive}"
+CURRENT SCENE: {scene_context}
+
+Respond with your character's intended action and dialogue.
+"""
+
+        if self.attempt == 1:
+            constraints = f"""
+{self.base_constraints}
+
+CRITICAL CONSTRAINTS:
+- State what you ATTEMPT to do only
+- Do NOT narrate outcomes or success/failure
+- Wait for DM to describe what happens
+"""
+
+        elif self.attempt == 2:
+            constraints = f"""
+{self.base_constraints}
+
+⚠️ VALIDATION FAILED: {self.previous_violation}
+
+CRITICAL CONSTRAINTS (STRICT):
+- State your character's INTENTION only
+- Do NOT assume success ("kills", "hits", "strikes")
+- Do NOT narrate outcomes ("the enemy falls")
+- Express action as attempt: "I try to...", "I attempt..."
+"""
+
+        else:  # attempt == 3
+            constraints = f"""
+{self.base_constraints}
+
+🚨 FINAL ATTEMPT - Previous violation: {self.previous_violation}
+
+MANDATORY FORMAT:
+"[Character name] attempts to [action]. [Any dialogue.]"
+
+ABSOLUTELY FORBIDDEN:
+- Any outcome language (successfully, manages to, kills, hits)
+- Any result narration (enemy dies, spell works, etc.)
+- Any success assumption
+
+If you violate this again, your action will be auto-corrected.
+"""
+
+        return base + constraints
 ```
-
-**Validation States**:
-- **VALID** (attempt 1): Pass validation, proceed
-- **INVALID** (attempt 1-2): Retry with correction
-- **INVALID** (attempt 3): Auto-fix or flag for DM
 
 ---
 
-### 3.4 ConsensusState
+## Relationship Diagrams
 
-**Purpose**: Represent agreement level among multiple agents.
+### Entity Relationships (Text Diagram)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Campaign Configuration                   │
+│  (CampaignConfig from characters.json)                      │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+                     │ contains 1-4
+                     ▼
+        ┌────────────────────────┐
+        │   CharacterConfig      │
+        │  (player + character)  │
+        └──────┬────────┬────────┘
+               │        │
+     creates   │        │ creates
+               │        │
+               ▼        ▼
+    ┌─────────────┐  ┌──────────────┐
+    │  AIPlayer   │  │ AICharacter  │
+    │ (strategic) │  │  (roleplay)  │
+    └──────┬──────┘  └──────┬───────┘
+           │                │
+           │ directs via    │
+           │ DirectiveMsg   │
+           └───────┬────────┘
+                   │
+                   │ both store/retrieve
+                   ▼
+           ┌───────────────┐
+           │  MemoryEdge   │
+           │   (Graphiti)  │
+           └───────┬───────┘
+                   │
+                   │ references
+                   ▼
+           ┌───────────────┐
+           │  MemoryNode   │
+           │ (NPC/Location)│
+           └───────────────┘
+```
+
+### Turn Phase Flow (Text Diagram)
+
+```
+        ┌──────────────┐
+        │ DM Narration │ ◄── DM inputs scene description
+        └──────┬───────┘
+               │
+               ▼
+       ┌───────────────┐
+       │ Memory Query  │ ◄── Query Graphiti for relevant context
+       └──────┬────────┘
+              │
+              ▼
+     ┌──────────────────┐
+     │ Strategic Intent │ ◄── AIPlayer decides high-level action
+     └──────┬───────────┘
+            │
+            │ (multi-agent only)
+            ▼
+     ┌─────────────────┐
+     │ OOC Discussion  │ ◄── Players debate strategy
+     └──────┬──────────┘
+            │
+            ▼
+   ┌──────────────────────┐
+   │ Consensus Detection  │ ◄── Unanimous/Majority/Timeout?
+   └──────┬───────────────┘
+          │
+          ▼
+   ┌──────────────────┐
+   │ Character Action │ ◄── AICharacter performs roleplay
+   └──────┬───────────┘
+          │
+          ▼
+    ┌────────────┐
+    │ Validation │ ◄── Check for narrative overreach
+    └──────┬─────┘
+           │
+           │ if invalid (max 3 retries)
+           │ └───► Retry with stricter prompt
+           │
+           │ if valid
+           ▼
+   ┌────────────────────┐
+   │ DM Adjudication   │ ◄── DM reviews action
+   └──────┬─────────────┘
+          │
+          ▼
+   ┌─────────────────┐
+   │ Dice Resolution │ ◄── Auto-roll or DM override
+   └──────┬──────────┘
+          │
+          ▼
+   ┌──────────────┐
+   │ DM Outcome   │ ◄── DM narrates result
+   └──────┬───────┘
+          │
+          ▼
+  ┌────────────────────┐
+  │ Character Reaction │ ◄── AICharacter responds in-character
+  └──────┬─────────────┘
+         │
+         ▼
+  ┌───────────────┐
+  │ Memory Storage│ ◄── Store events in Graphiti
+  └───────────────┘
+```
+
+### Memory Architecture (Text Diagram)
+
+```
+┌──────────────────────────────────────────────────┐
+│              Neo4j Graph Database                │
+│  ┌────────────────────────────────────────────┐ │
+│  │        Personal Memory (agent_alex_001)    │ │
+│  │  ┌───────────┐     ┌───────────┐          │ │
+│  │  │ MemoryEdge│────▶│MemoryNode │          │ │
+│  │  │ (Episodic)│     │   (NPC)   │          │ │
+│  │  └───────────┘     └───────────┘          │ │
+│  └────────────────────────────────────────────┘ │
+│                                                  │
+│  ┌────────────────────────────────────────────┐ │
+│  │      Shared Memory (campaign_main)         │ │
+│  │  ┌───────────┐     ┌───────────┐          │ │
+│  │  │ MemoryEdge│────▶│MemoryNode │          │ │
+│  │  │ (Semantic)│     │ (Location)│          │ │
+│  │  └───────────┘     └───────────┘          │ │
+│  └────────────────────────────────────────────┘ │
+│                                                  │
+│  ┌────────────────────────────────────────────┐ │
+│  │  Character Memory (char_zara_001)          │ │
+│  │  ┌───────────┐     ┌───────────┐          │ │
+│  │  │ MemoryEdge│────▶│MemoryNode │          │ │
+│  │  │(Procedural)│    │  (Item)   │          │ │
+│  │  └───────────┘     └───────────┘          │ │
+│  └────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────┘
+                    ▲
+                    │
+                    │ query via Graphiti
+                    │
+        ┌───────────┴──────────┐
+        │                      │
+   ┌────────┐            ┌──────────┐
+   │AIPlayer│            │AICharacter│
+   │ (can   │            │ (can only │
+   │ access │            │  access   │
+   │  all)  │            │character  │
+   └────────┘            │  layer)   │
+                         └──────────┘
+```
+
+---
+
+## Validation Rules
+
+### 1. Character Number Validation
 
 ```python
-from pydantic import BaseModel, Field
-from typing import Dict
-from enum import Enum
+def validate_lasers_roll(number: int, roll: int, task_type: Literal["lasers", "feelings"]) -> dict:
+    """
+    Validate Lasers & Feelings dice roll outcome.
 
-class Stance(str, Enum):
+    Rules:
+    - Lasers task: Roll UNDER number to succeed
+    - Feelings task: Roll OVER number to succeed
+    - Roll EXACTLY number: Success with complication
+
+    Args:
+        number: Character's Lasers/Feelings number (2-5)
+        roll: 1d6 result
+        task_type: Whether task requires lasers or feelings
+
+    Returns:
+        {success: bool, outcome: "success"|"failure"|"complication"}
+    """
+    if not 2 <= number <= 5:
+        raise ValueError(f"Character number must be 2-5, got {number}")
+
+    if not 1 <= roll <= 6:
+        raise ValueError(f"Roll must be 1-6, got {roll}")
+
+    if roll == number:
+        return {"success": True, "outcome": "complication"}
+
+    if task_type == "lasers":
+        success = roll < number
+    else:  # feelings
+        success = roll > number
+
+    return {
+        "success": success,
+        "outcome": "success" if success else "failure"
+    }
+
+
+# Example validation
+assert validate_lasers_roll(number=2, roll=1, task_type="lasers") == {
+    "success": True, "outcome": "success"
+}  # 1 < 2, success on lasers task
+
+assert validate_lasers_roll(number=2, roll=5, task_type="feelings") == {
+    "success": True, "outcome": "success"
+}  # 5 > 2, success on feelings task
+
+assert validate_lasers_roll(number=3, roll=3, task_type="lasers") == {
+    "success": True, "outcome": "complication"
+}  # Exactly 3, success with twist
+```
+
+### 2. Memory Corruption Probability
+
+```python
+import math
+
+def calculate_corruption_probability(
+    memory: MemoryEdge,
+    current_days_elapsed: int,
+    personality: PlayerPersonality,
+    global_strength: float = 0.5
+) -> float:
+    """
+    Calculate probability that memory will be corrupted during retrieval.
+
+    Formula:
+    p = personality_mod * time_factor * importance_mod * rehearsal_mod * global_strength
+
+    Capped at 95% to always allow some accurate recall.
+
+    Args:
+        memory: Memory edge to evaluate
+        current_days_elapsed: Current in-game day
+        personality: Agent's personality traits
+        global_strength: Global corruption tuning (0=none, 1=max)
+
+    Returns:
+        Probability between 0.0 and 0.95
+    """
+
+    # Time decay (exponential, ~63% at 1 year)
+    days_since_event = current_days_elapsed - memory.days_elapsed
+    time_factor = 1 - math.exp(-days_since_event / 365)
+
+    # Importance modifier
+    # importance 1.0 → modifier 0.5 (slow decay)
+    # importance 0.0 → modifier 1.5 (fast decay)
+    importance_modifier = 1.5 - memory.importance
+
+    # Rehearsal resistance
+    # rehearsal_count 20 → factor 0.0 (immune)
+    # rehearsal_count 0 → factor 1.0 (full decay)
+    rehearsal_factor = max(0, 1 - memory.rehearsal_count * 0.05)
+
+    # Personality modifier
+    # detail_oriented 0.9 → mod 0.7 (30% reduction)
+    # detail_oriented 0.1 → mod 1.3 (30% increase)
+    personality_modifier = personality.base_decay_rate * (
+        1 + (0.5 - personality.detail_oriented)
+    )
+
+    # Combine factors
+    probability = (
+        personality_modifier
+        * time_factor
+        * importance_modifier
+        * rehearsal_factor
+        * global_strength
+    )
+
+    # Cap at 95%
+    return min(probability, 0.95)
+
+
+# Example validation
+example_memory = MemoryEdge(
+    uuid="mem_001",
+    fact="The merchant offered 50 gold pieces",
+    valid_at=datetime.now(),
+    invalid_at=None,
+    episode_ids=["session_10"],
+    source_node_uuid="npc_merchant",
+    target_node_uuid="item_quest",
+    agent_id="agent_alex_001",
+    memory_type=MemoryType.SEMANTIC,
+    session_number=10,
+    days_elapsed=10,
+    importance=0.5,
+    rehearsal_count=0
+)
+
+example_personality = PlayerPersonality(
+    analytical_score=0.7,
+    risk_tolerance=0.6,
+    detail_oriented=0.9,  # Very meticulous
+    emotional_memory=0.4,
+    assertiveness=0.6,
+    cooperativeness=0.7,
+    openness=0.8,
+    rule_adherence=0.7,
+    roleplay_intensity=0.9,
+    base_decay_rate=0.3
+)
+
+current_day = 100  # 90 days later
+
+prob = calculate_corruption_probability(
+    example_memory, current_day, example_personality, global_strength=0.5
+)
+
+# Expected: ~15% (low because agent is detail-oriented and only 90 days)
+assert 0.1 <= prob <= 0.2  # Sanity check
+```
+
+### 3. Consensus Detection Rules
+
+```python
+class StanceClassification(str, Enum):
     AGREE = "agree"
     DISAGREE = "disagree"
     NEUTRAL = "neutral"
     SILENT = "silent"
 
-class Position(BaseModel):
-    """Individual agent's position on proposal"""
-    agent_id: str
-    stance: Stance
-    confidence: float = Field(..., ge=0.0, le=1.0)
 
-class ConsensusState(str, Enum):
-    UNANIMOUS = "unanimous"    # All explicitly agree
-    MAJORITY = "majority"      # >50% agree, no disagree
-    CONFLICTED = "conflicted"  # Active disagreement
-    TIMEOUT = "timeout"        # Exceeded discussion limit
+def detect_consensus(
+    positions: dict[str, StanceClassification],
+    max_rounds: int = 5,
+    current_round: int = 1,
+    discussion_duration_seconds: float = 0
+) -> Literal["unanimous", "majority", "conflicted", "timeout"]:
+    """
+    Detect consensus state among agents.
 
-class ConsensusResult(BaseModel):
-    """OOC discussion consensus outcome"""
+    Rules:
+    - UNANIMOUS: All agents explicitly agree
+    - MAJORITY: >50% agree, no active disagreement
+    - CONFLICTED: Active disagreement present
+    - TIMEOUT: Exceeded max_rounds OR 120 seconds
 
-    # Result
-    state: ConsensusState = Field(..., description="Consensus level achieved")
-    positions: Dict[str, Position] = Field(..., description="Each agent's position")
+    Args:
+        positions: agent_id -> stance mapping
+        max_rounds: Maximum discussion rounds (default 5)
+        current_round: Current discussion round
+        discussion_duration_seconds: Wall-time elapsed
 
-    # Metadata
-    rounds_elapsed: int = Field(..., ge=0, description="Discussion rounds completed")
-    time_elapsed_seconds: float = Field(..., ge=0.0, description="Real-time discussion duration")
+    Returns:
+        Consensus state
+    """
 
-    # Decision
-    proceed_with_action: bool = Field(..., description="Whether to proceed to action phase")
-    dissenting_agents: list[str] = Field(default_factory=list, description="Agents who disagreed")
+    # Check timeout conditions
+    if current_round >= max_rounds or discussion_duration_seconds >= 120:
+        return "timeout"
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "state": "majority",
-                "positions": {
-                    "agent_alex": {"agent_id": "agent_alex", "stance": "agree", "confidence": 0.9},
-                    "agent_blair": {"agent_id": "agent_blair", "stance": "agree", "confidence": 0.7},
-                    "agent_casey": {"agent_id": "agent_casey", "stance": "neutral", "confidence": 0.5}
-                },
-                "rounds_elapsed": 3,
-                "time_elapsed_seconds": 45.2,
-                "proceed_with_action": True,
-                "dissenting_agents": []
-            }
-        }
-    }
+    # Count stances
+    agree_count = sum(1 for s in positions.values() if s == StanceClassification.AGREE)
+    disagree_count = sum(1 for s in positions.values() if s == StanceClassification.DISAGREE)
+    total_agents = len(positions)
+
+    # Unanimous agreement
+    if all(s == StanceClassification.AGREE for s in positions.values()):
+        return "unanimous"
+
+    # Majority with no active disagreement
+    if agree_count > total_agents / 2 and disagree_count == 0:
+        return "majority"
+
+    # Active conflict
+    return "conflicted"
+
+
+# Example validations
+assert detect_consensus({
+    "agent_1": StanceClassification.AGREE,
+    "agent_2": StanceClassification.AGREE,
+    "agent_3": StanceClassification.AGREE
+}) == "unanimous"
+
+assert detect_consensus({
+    "agent_1": StanceClassification.AGREE,
+    "agent_2": StanceClassification.AGREE,
+    "agent_3": StanceClassification.NEUTRAL
+}) == "majority"
+
+assert detect_consensus({
+    "agent_1": StanceClassification.AGREE,
+    "agent_2": StanceClassification.DISAGREE,
+    "agent_3": StanceClassification.NEUTRAL
+}) == "conflicted"
+
+assert detect_consensus({
+    "agent_1": StanceClassification.NEUTRAL,
+    "agent_2": StanceClassification.NEUTRAL,
+    "agent_3": StanceClassification.NEUTRAL
+}, current_round=5) == "timeout"
 ```
 
----
-
-## 4. DM Interface Models
-
-### 4.1 DMCommand
-
-**Purpose**: Parsed DM input commands with type safety.
+### 4. Knowledge Separation Rules
 
 ```python
-from pydantic import BaseModel, Field
-from typing import Optional
-from enum import Enum
+class KnowledgeScope(str, Enum):
+    """Visibility scope for information"""
+    PLAYER_ONLY = "player_only"  # Strategic layer only
+    CHARACTER_ONLY = "character_only"  # Roleplay layer only
+    BOTH = "both"  # Both layers can access
 
-class DMCommandType(str, Enum):
-    NARRATE = "narrate"
-    ROLL = "roll"
-    SUCCESS = "success"
-    FAIL = "fail"
-    ASK = "ask"
-    END_SESSION = "end_session"
 
-class DiceRoll(BaseModel):
-    """Parsed dice notation"""
-    num_dice: int = Field(..., ge=1, le=100)
-    die_size: int = Field(..., ge=2, le=100)
-    modifier: int = Field(default=0, ge=-100, le=100)
-    advantage: bool = Field(default=False)
-    disadvantage: bool = Field(default=False)
+class KnowledgeItem(BaseModel):
+    """Piece of information with visibility scope"""
 
-    def __str__(self) -> str:
-        base = f"{self.num_dice}d{self.die_size}"
-        if self.modifier != 0:
-            sign = "+" if self.modifier > 0 else ""
-            base += f"{sign}{self.modifier}"
-        if self.advantage:
-            base += " (advantage)"
-        if self.disadvantage:
-            base += " (disadvantage)"
-        return base
-
-class DMCommand(BaseModel):
-    """Parsed DM command with validation"""
-
-    command_type: DMCommandType = Field(..., description="Command type")
-    text: Optional[str] = Field(default=None, description="Command text (narration, outcome, etc.)")
-
-    # For roll commands
-    dice_roll: Optional[DiceRoll] = Field(default=None, description="Parsed dice notation")
-    dc: Optional[int] = Field(default=None, ge=1, le=50, description="Difficulty class")
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {"command_type": "narrate", "text": "A goblin jumps from behind a tree"},
-                {"command_type": "roll", "dice_roll": {"num_dice": 1, "die_size": 20, "modifier": 5}, "dc": 15},
-                {"command_type": "success", "text": "Your blade strikes the goblin's shoulder"},
-                {"command_type": "fail", "text": "Your swing misses as the goblin dodges"},
-                {"command_type": "end_session"}
-            ]
-        }
-    }
-```
-
-**Command Grammar**:
-```
-narrate <text>         → Scene description
-roll <dice> dc <num>   → Call for roll (e.g., roll 1d20+5 dc 15)
-success <text>         → Auto-success narration
-fail <text>            → Auto-failure narration
-ask <question>         → Request player clarification
-end_session            → End current session
-```
-
----
-
-## 5. Settings & Configuration
-
-### 5.1 Settings
-
-**Purpose**: Application-wide configuration from environment variables.
-
-```python
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
-
-class Settings(BaseSettings):
-    """Application configuration from environment"""
-
-    # LLM Configuration
-    openai_api_key: str
-    openai_model_base_persona: str = "gpt-4o-2024-08-06"
-    openai_model_character: str = "gpt-4o-2024-08-06"
-    openai_model_corruption: str = "gpt-4o-mini-2024-07-18"
-    openai_model_validation: str = "gpt-4o-mini-2024-07-18"
-
-    # Database Configuration
-    neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str
-
-    # Redis Configuration
-    redis_url: str = "redis://localhost:6379"
-    rq_queue_base_persona: str = "base_persona"
-    rq_queue_character: str = "character"
-    rq_queue_validation: str = "validation"
-
-    # Graphiti Configuration
-    graphiti_group_id_prefix: str = "ttrpg_campaign_"
-
-    # Memory Corruption Configuration
-    corruption_enabled: bool = True
-    corruption_strength: float = 0.5
-    min_days_for_corruption: int = 7
-
-    # Observability
-    langsmith_api_key: Optional[str] = None
-    langsmith_project: str = "ttrpg-ai-agents"
-    langsmith_tracing_enabled: bool = False
-
-    # Performance Tuning
-    max_tokens_base_persona: int = 1000
-    max_tokens_character: int = 1000
-    temperature_base_persona: float = 0.7
-    temperature_character: float = 0.8
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False
+    content: str
+    scope: KnowledgeScope
+    revealed_to: list[str] = Field(
+        default_factory=list,
+        description="Which agent_ids have this knowledge"
     )
+
+    def can_access(self, agent_id: str, layer: Literal["player", "character"]) -> bool:
+        """Check if agent layer can access this knowledge"""
+
+        # Must be revealed to this agent
+        if agent_id not in self.revealed_to:
+            return False
+
+        # Check layer permissions
+        if self.scope == KnowledgeScope.BOTH:
+            return True
+        elif self.scope == KnowledgeScope.PLAYER_ONLY and layer == "player":
+            return True
+        elif self.scope == KnowledgeScope.CHARACTER_ONLY and layer == "character":
+            return True
+
+        return False
+
+
+# Example validation
+secret_info = KnowledgeItem(
+    content="You notice poison on the blade",
+    scope=KnowledgeScope.PLAYER_ONLY,
+    revealed_to=["agent_alex_001"]
+)
+
+# Player layer can access
+assert secret_info.can_access("agent_alex_001", "player") == True
+
+# Character layer CANNOT access
+assert secret_info.can_access("agent_alex_001", "character") == False
+
+# Other agents cannot access
+assert secret_info.can_access("agent_morgan_002", "player") == False
+```
+
+### 5. Message Visibility Enforcement
+
+```python
+def can_view_message(
+    message: Message,
+    requesting_agent_id: str,
+    requesting_layer: Literal["player", "character"]
+) -> bool:
+    """
+    Enforce message visibility rules based on channel and layer.
+
+    Visibility Rules:
+    - IC: Characters see full, players see summary only
+    - OOC: Only players see, characters NEVER see
+    - P2C: Only recipient character sees
+
+    Args:
+        message: Message to check
+        requesting_agent_id: Who is requesting access
+        requesting_layer: Which layer (player or character)
+
+    Returns:
+        True if access allowed, False otherwise
+    """
+
+    if message.channel == MessageChannel.IC:
+        # Characters see full IC messages
+        if requesting_layer == "character":
+            return True
+        # Players see summary only (handled separately)
+        else:
+            return False  # Use get_ic_summary instead
+
+    elif message.channel == MessageChannel.OOC:
+        # Only players see OOC
+        return requesting_layer == "player"
+
+    elif message.channel == MessageChannel.P2C:
+        # Only recipient character sees directive
+        if requesting_layer == "character":
+            return (
+                message.to_agents is not None and
+                requesting_agent_id in message.to_agents
+            )
+        return False
+
+    return False
+
+
+# Example validations
+ic_message = Message(
+    message_id="msg_001",
+    channel=MessageChannel.IC,
+    from_agent="char_zara_001",
+    to_agents=None,
+    content="I attempt to repair the ship's fuel cell",
+    timestamp=datetime.now()
+)
+
+# Character can view IC
+assert can_view_message(ic_message, "char_zara_001", "character") == True
+
+# Player CANNOT view IC directly (use summary)
+assert can_view_message(ic_message, "agent_alex_001", "player") == False
+
+ooc_message = Message(
+    message_id="msg_002",
+    channel=MessageChannel.OOC,
+    from_agent="agent_alex_001",
+    to_agents=None,
+    content="I think we should investigate the merchant",
+    timestamp=datetime.now()
+)
+
+# Player can view OOC
+assert can_view_message(ooc_message, "agent_alex_001", "player") == True
+
+# Character CANNOT view OOC
+assert can_view_message(ooc_message, "char_zara_001", "character") == False
+```
+
+---
+
+## Neo4j Index Definitions
+
+```cypher
+-- Composite index for agent-temporal queries
+CREATE INDEX agent_session_temporal IF NOT EXISTS
+FOR (e:Edge)
+ON (e.agent_id, e.session_number, e.days_elapsed);
+
+-- Temporal range indexes for validity windows
+CREATE INDEX edge_valid_at IF NOT EXISTS
+FOR (e:Edge)
+ON (e.valid_at);
+
+CREATE INDEX edge_invalid_at IF NOT EXISTS
+FOR (e:Edge)
+ON (e.invalid_at);
+
+-- Full-text index for semantic content search
+CREATE FULLTEXT INDEX edge_fact_fulltext IF NOT EXISTS
+FOR (e:Edge)
+ON EACH [e.fact];
+
+-- Index on corruption metadata for analytics
+CREATE INDEX corruption_type IF NOT EXISTS
+FOR (e:Edge)
+ON (e.corruption_type);
+
+-- Index for importance-based retrieval
+CREATE INDEX edge_importance IF NOT EXISTS
+FOR (e:Edge)
+ON (e.importance);
+
+-- Index for rehearsal count tracking
+CREATE INDEX edge_rehearsal IF NOT EXISTS
+FOR (e:Edge)
+ON (e.rehearsal_count);
+
+-- Composite index for memory type filtering
+CREATE INDEX memory_type_agent IF NOT EXISTS
+FOR (e:Edge)
+ON (e.memory_type, e.agent_id);
+```
+
+---
+
+## Redis Data Structures
+
+### Message Channels
+
+```
+# In-character messages (all characters see)
+channel:ic:messages          LIST of JSON-encoded Message objects
+
+# IC message summaries (players see)
+channel:ic:summaries         LIST of JSON-encoded ICMessageSummary objects
+
+# Out-of-character messages (only players see)
+channel:ooc:messages         LIST of JSON-encoded Message objects
+
+# Player-to-character directives (per character)
+channel:p2c:{character_id}   LIST of JSON-encoded DirectiveMessage objects
+```
+
+### Turn State
+
+```
+# Current game state
+turn:state                   HASH of GameState fields
+
+# Turn history
+turn:history                 LIST of completed turn GameState snapshots
+
+# Active phase checkpoint
+turn:checkpoint:{turn_num}   STRING (JSON-encoded GameState for rollback)
 ```
 
 ---
 
 ## Summary
 
-### Entity Count
-- **11 core models** defined with full Pydantic validation
-- **6 enum types** for constrained values
-- **15+ validation rules** enforcing data integrity
+This data model defines:
 
-### Validation Coverage
-- Type safety via Pydantic 2.x
-- Range constraints (ge/le)
-- String patterns (regex)
-- Custom validators for temporal consistency
-- Field-level defaults and optionality
+1. **Core Entities**: AIPlayer, AICharacter, Personality models matching Lasers & Feelings mechanics
+2. **LangGraph State**: TypedDicts for turn phases, validation, memory queries, consensus
+3. **Graphiti Memory**: Extended Edge/Node models with corruption tracking and temporal metadata
+4. **Configuration**: JSON schema for characters.json with validation
+5. **Messages**: Three-channel routing (IC/OOC/P2C) with visibility enforcement
+6. **Validation**: Forbidden pattern detection, progressive prompts, consensus rules
+7. **Relationships**: Text diagrams showing entity connections and data flow
+8. **Validation Rules**: Dice rolls, memory corruption, consensus detection, knowledge separation
 
-### Relationships Mapped
-- Agent ↔ Personality (1:1)
-- Agent ↔ Character (1:1)
-- Memory ↔ Episode (N:1)
-- Memory ↔ Entities (N:M)
-- Message ↔ Channel visibility rules
+All models use Pydantic 2.x for type safety and validation. Neo4j indexes optimize temporal queries. Redis structures support turn state persistence and message routing.
 
-### State Transitions Defined
-- GamePhase: 14-phase turn cycle with conditional branching
-- ValidationResult: 3-attempt retry escalation
-- ConsensusState: 4-state agreement detection
-- MemoryEdge: Created → Corrupted → Invalidated lifecycle
-
-**All models ready for implementation with pytest contract tests.**
+**Status**: Ready for implementation. All models are complete with examples and validation logic.
