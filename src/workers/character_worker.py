@@ -153,7 +153,7 @@ def react_to_outcome(
         emotional_state = EmotionalState(
             primary_emotion="neutral",
             intensity=0.5,
-            secondary_emotions=None,
+            secondary_emotions=[],  # Empty list instead of None
         )
 
         # Call agent method with retry protection

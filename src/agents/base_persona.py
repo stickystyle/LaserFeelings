@@ -34,6 +34,7 @@ class BasePersonaAgent:
         self,
         agent_id: str,
         personality: PlayerPersonality,
+        character_number: int,
         memory: CorruptedTemporalMemory | None = None,
         openai_client: AsyncOpenAI | None = None,
         model: str = "gpt-4o",
@@ -45,17 +46,34 @@ class BasePersonaAgent:
         Args:
             agent_id: Unique identifier for this agent (e.g., 'agent_alex_001')
             personality: Player personality traits affecting decision-making
+            character_number: Character's Lasers & Feelings number (2-5) for mechanics awareness
             memory: Memory interface for retrieving past experiences (optional for testing)
             openai_client: AsyncOpenAI client for LLM calls (optional for testing)
             model: OpenAI model to use (default: gpt-4o)
             temperature: LLM temperature for response variation (default: 0.7)
         """
+        # Validate character_number
+        if not 2 <= character_number <= 5:
+            raise ValueError(f"Character number must be 2-5, got {character_number}")
+
         self.agent_id = agent_id
         self.personality = personality
+        self.character_number = character_number
         self._memory = memory
         self._openai_client = openai_client
         self._llm_client = LLMClient(openai_client, model) if openai_client else None
         self.temperature = temperature
+
+    def _build_mechanics_context(self) -> str:
+        """
+        Build game mechanics section using character's Lasers & Feelings number.
+
+        Returns:
+            Formatted string explaining game mechanics personalized to character.
+        """
+        from src.config.prompts import build_game_mechanics_section
+
+        return build_game_mechanics_section(self.character_number)
 
     async def participate_in_ooc_discussion(
         self,
@@ -124,6 +142,9 @@ class BasePersonaAgent:
                      "bold" if self.personality.risk_tolerance > 0.7 else "balanced"
         cooperation_style = "collaborative" if self.personality.cooperativeness > 0.6 else "independent"
 
+        # Build mechanics context for strategic awareness
+        mechanics_context = self._build_mechanics_context()
+
         system_prompt = f"""You are a TTRPG player participating in strategic discussion.
 
 Your personality traits:
@@ -132,8 +153,11 @@ Your personality traits:
 - Cooperation style: {cooperation_style}
 - Analytical score: {self.personality.analytical_score:.2f}
 
+{mechanics_context}
+
 You are discussing strategy OUT OF CHARACTER. Do not roleplay your character.
 Focus on tactical analysis and strategic planning.
+Use your knowledge of game mechanics to inform your strategic suggestions.
 """
 
         user_prompt = f"""Current situation:
@@ -216,6 +240,9 @@ Keep response under 200 words. Be conversational but strategic.
         if not discussion_summary or not discussion_summary.strip():
             raise NoConsensusReached("Empty discussion summary provided")
 
+        # Build mechanics context for strategic planning
+        mechanics_context = self._build_mechanics_context()
+
         # Build personality-aware system prompt
         system_prompt = f"""You are a strategic TTRPG player formulating your intent.
 
@@ -224,7 +251,10 @@ Your personality:
 - Analytical score: {self.personality.analytical_score:.2f} (0=intuitive, 1=logical)
 - Cooperativeness: {self.personality.cooperativeness:.2f}
 
+{mechanics_context}
+
 Based on group discussion, formulate YOUR strategic intent.
+Consider game mechanics when assessing risks and choosing approaches.
 """
 
         user_prompt = f"""Group discussion summary:
@@ -252,13 +282,22 @@ Ensure your intent reflects your personality traits.
             # Parse JSON response
             data = json.loads(response)
 
+            # Handle LLM returning structured risk_assessment (convert to string)
+            risk_assessment = data.get("risk_assessment")
+            if isinstance(risk_assessment, dict):
+                risk_assessment = json.dumps(risk_assessment)
+
+            fallback_plan = data.get("fallback_plan")
+            if isinstance(fallback_plan, dict):
+                fallback_plan = json.dumps(fallback_plan)
+
             # Create Intent object
             intent = Intent(
                 agent_id=self.agent_id,
                 strategic_goal=data.get("strategic_goal", ""),
                 reasoning=data.get("reasoning", ""),
-                risk_assessment=data.get("risk_assessment"),
-                fallback_plan=data.get("fallback_plan"),
+                risk_assessment=risk_assessment,
+                fallback_plan=fallback_plan,
             )
 
             # Validate required fields
@@ -317,6 +356,9 @@ Ensure your intent reflects your personality traits.
                 f"Invalid character_id format: {character_state.character_id}"
             )
 
+        # Build mechanics context for tactical directive creation
+        mechanics_context = self._build_mechanics_context()
+
         system_prompt = f"""You are a TTRPG player issuing a directive to your character.
 
 Your role: Translate strategic intent into character-level instruction.
@@ -328,6 +370,11 @@ Your role: Translate strategic intent into character-level instruction.
 Your personality:
 - Risk tolerance: {self.personality.risk_tolerance:.2f}
 - Roleplay intensity: {self.personality.roleplay_intensity:.2f}
+
+{mechanics_context}
+
+Use your understanding of mechanics to guide character toward favorable approaches.
+Consider whether LASERS or FEELINGS approaches better suit the situation and your character's strengths.
 """
 
         user_prompt = f"""Strategic intent:

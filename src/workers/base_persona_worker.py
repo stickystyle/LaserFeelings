@@ -11,6 +11,7 @@ def participate_in_ooc_discussion(
     discussion_context: str,
     previous_messages: list[dict[str, Any]],
     personality_config: dict[str, Any],
+    character_number: int,
 ) -> dict[str, Any]:
     """
     RQ worker function: BasePersonaAgent participates in out-of-character discussion.
@@ -25,6 +26,7 @@ def participate_in_ooc_discussion(
             Each message dict has: {from_agent, content, timestamp, ...}
         personality_config: Personality configuration dict with keys:
             {decision_style, risk_tolerance, cooperativeness, analytical_score, roleplay_intensity}
+        character_number: Character's Lasers & Feelings number (2-5) for mechanics awareness
 
     Returns:
         Message dict with full Pydantic model - agent's contribution to OOC discussion
@@ -63,6 +65,7 @@ def participate_in_ooc_discussion(
         agent = BasePersonaAgent(
             agent_id=agent_id,
             personality=personality,
+            character_number=character_number,
             memory=memory,
             openai_client=openai_client,
             model="gpt-4o",
@@ -106,6 +109,7 @@ def formulate_strategic_intent(
     scene_context: str,
     memories: list[dict[str, Any]],
     personality_config: dict[str, Any],
+    character_number: int,
 ) -> dict[str, Any]:
     """
     RQ worker function: BasePersonaAgent formulates strategic intent from discussion.
@@ -120,6 +124,7 @@ def formulate_strategic_intent(
             Each memory dict has: {fact, confidence, timestamp, ...}
         personality_config: Personality configuration dict with keys:
             {decision_style, risk_tolerance, cooperativeness, analytical_score, roleplay_intensity}
+        character_number: Character's Lasers & Feelings number (2-5) for mechanics awareness
 
     Returns:
         Intent dict with keys: {agent_id, strategic_goal, reasoning, risk_assessment, fallback_plan}
@@ -153,6 +158,7 @@ def formulate_strategic_intent(
         agent = BasePersonaAgent(
             agent_id=agent_id,
             personality=personality,
+            character_number=character_number,
             openai_client=openai_client,
             model="gpt-4o",
             temperature=0.7,
@@ -184,6 +190,7 @@ def create_character_directive(
     agent_id: str,
     strategic_intent: dict[str, Any],
     personality_config: dict[str, Any],
+    character_number: int,
 ) -> dict[str, Any]:
     """
     RQ worker function: BasePersonaAgent creates directive for character layer.
@@ -197,6 +204,7 @@ def create_character_directive(
             Keys: {agent_id, strategic_goal, reasoning, risk_assessment, fallback_plan}
         personality_config: Personality configuration dict with keys:
             {decision_style, risk_tolerance, cooperativeness, analytical_score, roleplay_intensity}
+        character_number: Character's Lasers & Feelings number (2-5) for mechanics awareness
 
     Returns:
         Directive dict with keys:
@@ -233,6 +241,7 @@ def create_character_directive(
         agent = BasePersonaAgent(
             agent_id=agent_id,
             personality=personality,
+            character_number=character_number,
             openai_client=openai_client,
             model="gpt-4o",
             temperature=0.7,

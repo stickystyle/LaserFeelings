@@ -190,12 +190,30 @@ def _create_strategic_intent_node(base_persona_queue: Queue):
         for agent_id in state["active_agents"]:
             logger.debug(f"Dispatching strategic intent job for {agent_id}")
 
+            # TODO: Load personality config from character configuration file
+            # For MVP, using placeholder personality config (Android Engineer personality)
+            placeholder_personality = {
+                "analytical_score": 0.8,  # Logical, analytical thinking
+                "risk_tolerance": 0.3,  # Cautious, prefers safe solutions
+                "detail_oriented": 0.9,  # Very focused on technical details
+                "emotional_memory": 0.2,  # Factual memory, not emotion-driven
+                "assertiveness": 0.5,  # Balanced, not overly dominant
+                "cooperativeness": 0.7,  # Team player
+                "openness": 0.6,  # Open to new technical solutions
+                "rule_adherence": 0.8,  # Follows protocols closely
+                "roleplay_intensity": 0.6,  # Moderate roleplay
+                "base_decay_rate": 0.3  # Low memory decay (good retention)
+            }
+            placeholder_character_number = 2  # Android Engineer (good at Lasers)
+
             job = base_persona_queue.enqueue(
-                'src.workers.base_persona_worker.formulate_strategic_intent_job',
+                'src.workers.base_persona_worker.formulate_strategic_intent',
                 args=(
                     agent_id,
                     state["dm_narration"],
-                    state["retrieved_memories"].get(agent_id, [])
+                    state["retrieved_memories"].get(agent_id, []),
+                    placeholder_personality,
+                    placeholder_character_number
                 ),
                 job_timeout=30,
                 result_ttl=300,
@@ -267,11 +285,15 @@ def _create_p2c_directive_node(router: MessageRouter):
             # Map agent_id to character_id using helper
             character_id = _get_character_id_for_agent(agent_id)
 
+            # Convert strategic intent to string for message content
+            # (strategic_intent is a dict from job.result)
+            intent_text = strategic_intent.get("strategic_goal", str(strategic_intent))
+
             # Send P2C directive
             router.add_message(
                 channel=MessageChannel.P2C,
                 from_agent=agent_id,
-                content=strategic_intent,
+                content=intent_text,
                 message_type=MessageType.DIRECTIVE,
                 phase=GamePhase.CHARACTER_ACTION.value,
                 turn_number=state["turn_number"],
@@ -325,13 +347,36 @@ def _create_character_action_node(character_queue: Queue):
 
             logger.debug(f"Dispatching character action job for {character_id}")
 
-            # Get directive from P2C channel
-            directive = state["strategic_intents"][agent_id]
+            # Get strategic intent and transform to directive format
+            # TODO: In full implementation, call BasePersonaAgent.create_character_directive()
+            # For MVP, transform Intent dict to Directive dict
+            strategic_intent = state["strategic_intents"][agent_id]
+            directive = {
+                "from_player": agent_id,
+                "to_character": character_id,
+                "instruction": strategic_intent.get("strategic_goal", ""),
+                "tactical_guidance": strategic_intent.get("reasoning", ""),
+                "emotional_tone": "focused"  # Default for MVP
+            }
             scene_context = state["dm_narration"]
 
+            # TODO: Load character sheet config from configuration file
+            # For MVP, using placeholder character sheet
+            placeholder_character_sheet = {
+                "name": "Zara-7",
+                "style": "Android",
+                "role": "Engineer",
+                "number": 2,  # Good at Lasers (technical/logical tasks)
+                "character_goal": "Protect the crew through technical excellence",
+                "equipment": ["Advanced toolkit", "Repair drone"],
+                "speech_patterns": ["Precise technical language", "Logical reasoning"],
+                "mannerisms": ["Tilts head when analyzing", "LED eyes dim when processing"],
+                "approach_bias": "technical_solutions"
+            }
+
             job = character_queue.enqueue(
-                'src.workers.character_worker.perform_action_job',
-                args=(character_id, directive, scene_context),
+                'src.workers.character_worker.perform_action',
+                args=(character_id, directive, scene_context, placeholder_character_sheet),
                 job_timeout=30,
                 result_ttl=300,
                 failure_ttl=600
@@ -540,9 +585,26 @@ def _create_character_reaction_node(character_queue: Queue):
 
             logger.debug(f"Dispatching character reaction job for {character_id}")
 
+            # Get prior action for context
+            prior_action = state["character_actions"].get(character_id, "")
+
+            # TODO: Load character sheet config from configuration file
+            # For MVP, using placeholder character sheet (same as in perform_action)
+            placeholder_character_sheet = {
+                "name": "Zara-7",
+                "style": "Android",
+                "role": "Engineer",
+                "number": 2,
+                "character_goal": "Protect the crew through technical excellence",
+                "equipment": ["Advanced toolkit", "Repair drone"],
+                "speech_patterns": ["Precise technical language", "Logical reasoning"],
+                "mannerisms": ["Tilts head when analyzing", "LED eyes dim when processing"],
+                "approach_bias": "technical_solutions"
+            }
+
             job = character_queue.enqueue(
-                'src.workers.character_worker.react_to_outcome_job',
-                args=(character_id, state["dm_outcome"], state.get("dice_success", True)),
+                'src.workers.character_worker.react_to_outcome',
+                args=(character_id, state["dm_outcome"], prior_action, placeholder_character_sheet),
                 job_timeout=30,
                 result_ttl=300,
                 failure_ttl=600
@@ -801,7 +863,7 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     character_reaction_node = _create_character_reaction_node(character_queue)
 
     # Initialize graph
-    workflow = StateGraph(dict)  # Use dict for GameState TypedDict
+    workflow = StateGraph(GameState)  # Use GameState TypedDict for schema
 
     # Add phase handler nodes (T047-T056)
     workflow.add_node("dm_narration", dm_narration_node)
@@ -921,6 +983,9 @@ class TurnOrchestrator:
             "retrieved_memories": {},
             "retry_count": 0,
         }
+
+        logger.debug(f"Initial state keys: {list(initial_state.keys())}")
+        logger.debug(f"turn_number in initial_state: {'turn_number' in initial_state}")
 
         # Execute graph with checkpointing
         thread_id = f"session_{session_number}"

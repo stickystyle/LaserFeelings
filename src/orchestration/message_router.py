@@ -52,7 +52,7 @@ class MessageRouter:
             ValueError: If channel not recognized or recipient invalid
         """
         logger.debug(
-            f"Routing message {message.message_id} to channel {message.channel.value}"
+            f"Routing message {message.message_id} to channel {message.channel}"
         )
 
         recipients_count = 0
@@ -234,7 +234,9 @@ class MessageRouter:
 
         messages = []
         for raw in raw_messages:
-            data = json.loads(raw)
+            # Decode bytes if needed (decode_responses=False)
+            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            data = json.loads(text)
             # Parse datetime strings
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
             messages.append(Message(**data))
@@ -252,7 +254,9 @@ class MessageRouter:
 
         messages = []
         for raw in raw_messages:
-            data = json.loads(raw)
+            # Decode bytes if needed (decode_responses=False)
+            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            data = json.loads(text)
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
             messages.append(Message(**data))
 
@@ -265,7 +269,9 @@ class MessageRouter:
 
         messages = []
         for raw in raw_messages:
-            data = json.loads(raw)
+            # Decode bytes if needed (decode_responses=False)
+            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            data = json.loads(text)
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
             messages.append(Message(**data))
 
@@ -286,7 +292,9 @@ class MessageRouter:
 
         summaries = []
         for raw in raw_summaries:
-            data = json.loads(raw)
+            # Decode bytes if needed (decode_responses=False)
+            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            data = json.loads(text)
             data['timestamp'] = datetime.fromisoformat(data['timestamp'])
             summaries.append(ICMessageSummary(**data))
 

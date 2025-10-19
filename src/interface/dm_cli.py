@@ -1,17 +1,19 @@
-# ABOUTME: DM Command-Line Interface for interacting with AI TTRPG players through turn-based commands.
-# ABOUTME: Provides command parsing, output formatting, session management, and error handling for DMs.
+# ABOUTME: DM Command-Line Interface for interacting with AI TTRPG players.
+# ABOUTME: Command parsing, output formatting, session management, and error handling.
 
-import sys
 import re
-from datetime import datetime
-from enum import Enum
-from typing import Optional
+import sys
 from dataclasses import dataclass
+from enum import Enum
 
-from src.models.messages import DMCommand, DMCommandType as ModelDMCommandType, DiceRoll
-from src.models.game_state import GameState, GamePhase
+from redis import Redis
+from loguru import logger
+
+from src.config.settings import get_settings
+from src.models.game_state import GamePhase
+from src.orchestration.state_machine import TurnOrchestrator
 from src.utils.dice import parse_dice_notation, roll_dice
-
+from src.utils.logging import setup_logging
 
 # ============================================================================
 # Custom Exceptions
@@ -224,7 +226,7 @@ class CLIFormatter:
     def format_validation_result(
         self,
         valid: bool,
-        violations: Optional[list[str]] = None
+        violations: list[str] | None = None
     ) -> str:
         """Format validation pass/fail"""
         if valid:
@@ -256,13 +258,19 @@ class CLIFormatter:
 
     def format_awaiting_dm_input(
         self,
-        expected_command_types: Optional[list[str]] = None
+        expected_command_types: list[str] | None = None,
+        current_phase: GamePhase | None = None
     ) -> str:
         """Format prompt awaiting DM input"""
+        phase_display = ""
+        if current_phase:
+            phase_name = self._humanize_phase_name(current_phase)
+            phase_display = f"[{phase_name}] "
+
         if expected_command_types:
             commands = ", ".join(expected_command_types)
-            return f"\nAwaiting DM input ({commands})...\nDM > "
-        return "\nDM > "
+            return f"\nAwaiting DM input ({commands})...\n{phase_display}DM > "
+        return f"\n{phase_display}DM > "
 
     def format_session_info(
         self,
@@ -277,7 +285,7 @@ class CLIFormatter:
 
         lines = [
             "\n" + "=" * 50,
-            f"SESSION INFO",
+            "SESSION INFO",
             "=" * 50,
             f"Campaign: {campaign_name}",
             f"Session: {session_number}",
@@ -288,7 +296,9 @@ class CLIFormatter:
         ]
 
         for agent in active_agents:
-            lines.append(f"  - {agent.get('character_name', 'Unknown')} (ID: {agent.get('agent_id', 'N/A')})")
+            char_name = agent.get('character_name', 'Unknown')
+            agent_id = agent.get('agent_id', 'N/A')
+            lines.append(f"  - {char_name} (ID: {agent_id})")
 
         lines.append("=" * 50)
         return "\n".join(lines)
@@ -312,7 +322,7 @@ class CLIFormatter:
         self,
         error_type: str,
         message: str,
-        suggestion: Optional[str] = None
+        suggestion: str | None = None
     ) -> str:
         """Format error message with optional suggestion"""
         lines = [
@@ -373,7 +383,7 @@ class DMCommandLineInterface:
         self.orchestrator = orchestrator
 
         # Session state
-        self._current_phase: Optional[GamePhase] = None
+        self._current_phase: GamePhase | None = GamePhase.DM_NARRATION  # Start at narration phase
         self._turn_number: int = 1
         self._session_number: int = 1
         self._campaign_name: str = ""
@@ -556,16 +566,29 @@ class DMCommandLineInterface:
         """
         # Display header
         if self._campaign_name:
+            # Format agent list for display
+            if self._active_agents:
+                if isinstance(self._active_agents[0], dict):
+                    # Legacy format: list of dicts
+                    character_list = [
+                        agent.get("character_name", "Unknown")
+                        for agent in self._active_agents
+                    ]
+                else:
+                    # New format: list of agent IDs
+                    character_list = [
+                        "Zara-7 (Android Engineer)"  # TODO: Load from config
+                    ]
+            else:
+                character_list = []
+
             print(self.formatter.format_header(
                 campaign_name=self._campaign_name,
-                characters=[
-                    agent.get("character_name", "Unknown")
-                    for agent in self._active_agents
-                ]
+                characters=character_list
             ))
 
         print("\nSession starting...")
-        print(self.formatter.format_awaiting_dm_input())
+        print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
 
         while not self._should_exit:
             try:
@@ -585,7 +608,7 @@ class DMCommandLineInterface:
                         suggestion=self._get_command_suggestion(user_input)
                     )
                     print(error_output)
-                    print(self.formatter.format_awaiting_dm_input())
+                    print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
                     continue
 
                 # Execute command
@@ -598,12 +621,45 @@ class DMCommandLineInterface:
                         suggestion=self._get_command_suggestion(user_input)
                     )
                     print(error_output)
-                    print(self.formatter.format_awaiting_dm_input())
+                    print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
                     continue
 
                 # Display command-specific output
                 if "output" in result:
                     print(result["output"])
+
+                # Execute turn cycle if needed
+                if result.get("should_execute_turn") and self.orchestrator:
+                    try:
+                        logger.info("Executing turn cycle via orchestrator")
+                        turn_result = self.orchestrator.execute_turn_cycle(
+                            dm_input=result["args"]["text"],
+                            active_agents=self._active_agents,
+                            turn_number=self._turn_number,
+                            session_number=self._session_number
+                        )
+
+                        # Display turn results
+                        print("\n--- Turn Results ---")
+                        print(f"Phase completed: {turn_result['phase_completed']}")
+
+                        # Display character actions
+                        if turn_result.get("character_actions"):
+                            print("\nCharacter Actions:")
+                            for agent_id, action in turn_result["character_actions"].items():
+                                print(f"  {agent_id}: {action}")
+
+                        # Update current phase and increment turn counter
+                        self._current_phase = GamePhase(turn_result['phase_completed'])
+                        self._turn_number += 1
+
+                    except Exception as e:
+                        error_output = self.formatter.format_error(
+                            error_type=type(e).__name__,
+                            message=f"Turn execution failed: {e}",
+                            suggestion="Check logs for details"
+                        )
+                        print(error_output)
 
                 # Check for exit
                 if result.get("should_exit"):
@@ -612,11 +668,11 @@ class DMCommandLineInterface:
                     break
 
                 # Show next prompt
-                print(self.formatter.format_awaiting_dm_input())
+                print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
 
             except KeyboardInterrupt:
                 print("\n\nReceived interrupt signal. Use /quit to exit gracefully.")
-                print(self.formatter.format_awaiting_dm_input())
+                print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
             except EOFError:
                 print("\n\nEnd of input. Exiting.")
                 break
@@ -627,9 +683,9 @@ class DMCommandLineInterface:
                     suggestion="This is an unexpected error. Check logs for details."
                 )
                 print(error_output)
-                print(self.formatter.format_awaiting_dm_input())
+                print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
 
-    def _get_command_suggestion(self, user_input: str) -> Optional[str]:
+    def _get_command_suggestion(self, user_input: str) -> str | None:
         """Get helpful suggestion based on failed command"""
         if "/roll" in user_input.lower():
             return "Try: /roll 1d20, /roll 2d6+3, or /roll d6"
@@ -646,16 +702,35 @@ class DMCommandLineInterface:
 
 def main():
     """Entry point for running CLI standalone"""
-    cli = DMCommandLineInterface()
+    # Initialize logging
+    settings = get_settings()
+    setup_logging(log_level=settings.log_level)
+
+    # Initialize Redis connection
+    try:
+        # Note: decode_responses=False is required for RQ (pickled data)
+        # MessageRouter will handle decoding JSON strings manually
+        redis_client = Redis.from_url(settings.redis_url)
+        redis_client.ping()
+        logger.info("Connected to Redis successfully")
+    except Exception as e:
+        print(f"\nFatal error: Could not connect to Redis: {e}")
+        print("Make sure Redis is running via 'docker-compose up -d'")
+        sys.exit(1)
+
+    # Initialize orchestrator
+    orchestrator = TurnOrchestrator(redis_client)
+
+    # Initialize CLI with orchestrator
+    cli = DMCommandLineInterface(orchestrator=orchestrator)
     cli._campaign_name = "Voyage of the Raptor"
-    cli._active_agents = [
-        {"agent_id": "agent_001", "character_name": "Zara-7 (Android Engineer)"}
-    ]
+    cli._active_agents = ["agent_001"]  # List of agent IDs, not dicts
 
     try:
         cli.run()
     except Exception as e:
         print(f"\nFatal error: {e}")
+        logger.exception("Fatal error in CLI")
         sys.exit(1)
 
 
