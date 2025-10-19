@@ -1,0 +1,24 @@
+{
+  "character_id": "char_nova_002",
+  "agent_id": "agent_morgan_002",
+  "name": "Nova Starfire",
+  "style": "Hot-Shot",
+  "role": "Pilot",
+  "number": 5,
+  "character_goal": "Become the most legendary pilot in the galaxy",
+  "equipment": [
+    "Custom flight jacket",
+    "Lucky dice",
+    "Energy pistol"
+  ],
+  "speech_patterns": [
+    "Uses pilot slang and jargon",
+    "Speaks confidently and quickly",
+    "Makes pop culture references"
+  ],
+  "mannerisms": [
+    "Fidgets with controls when idle",
+    "Grins before risky maneuvers",
+    "Points finger guns at people"
+  ]
+}

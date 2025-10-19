@@ -1,0 +1,24 @@
+{
+  "character_id": "char_zara_001",
+  "agent_id": "agent_alex_001",
+  "name": "Zara-7",
+  "style": "Android",
+  "role": "Engineer",
+  "number": 2,
+  "character_goal": "Understand human emotions through experience",
+  "equipment": [
+    "Multi-tool",
+    "Diagnostic scanner",
+    "Spare circuits"
+  ],
+  "speech_patterns": [
+    "Speaks formally and precisely",
+    "Uses technical jargon",
+    "Asks clarifying questions about emotions"
+  ],
+  "mannerisms": [
+    "Tilts head when confused",
+    "Pauses before expressing opinions",
+    "Observes humans intently"
+  ]
+}

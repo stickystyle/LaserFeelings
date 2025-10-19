@@ -1,0 +1,24 @@
+{
+  "character_id": "char_quinn_003",
+  "agent_id": "agent_sam_003",
+  "name": "Quinn Vel",
+  "style": "Savvy",
+  "role": "Envoy",
+  "number": 4,
+  "character_goal": "Build alliances and prevent unnecessary conflicts",
+  "equipment": [
+    "Diplomatic credentials",
+    "Translation device",
+    "Formal attire"
+  ],
+  "speech_patterns": [
+    "Uses diplomatic language",
+    "Asks open-ended questions",
+    "Mediates conflicts naturally"
+  ],
+  "mannerisms": [
+    "Makes steady eye contact",
+    "Uses calming hand gestures",
+    "Smiles warmly at strangers"
+  ]
+}

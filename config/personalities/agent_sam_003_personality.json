@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent_sam_003",
+  "player_name": "Sam",
+  "player_goal": "Build strong party dynamics and support teammates",
+  "analytical_score": 0.6,
+  "risk_tolerance": 0.5,
+  "detail_oriented": 0.65,
+  "emotional_memory": 0.7,
+  "assertiveness": 0.75,
+  "cooperativeness": 0.95,
+  "openness": 0.75,
+  "rule_adherence": 0.7,
+  "roleplay_intensity": 0.8,
+  "base_decay_rate": 0.45
+}

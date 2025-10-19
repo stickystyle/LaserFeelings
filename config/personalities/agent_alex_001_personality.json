@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent_alex_001",
+  "player_name": "Alex",
+  "player_goal": "Get character involved in crazy space adventures",
+  "analytical_score": 0.85,
+  "risk_tolerance": 0.35,
+  "detail_oriented": 0.9,
+  "emotional_memory": 0.3,
+  "assertiveness": 0.6,
+  "cooperativeness": 0.75,
+  "openness": 0.8,
+  "rule_adherence": 0.85,
+  "roleplay_intensity": 0.9,
+  "base_decay_rate": 0.3
+}

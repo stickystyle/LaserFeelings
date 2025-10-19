@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent_morgan_002",
+  "player_name": "Morgan",
+  "player_goal": "Create dramatic moments and take bold risks",
+  "analytical_score": 0.25,
+  "risk_tolerance": 0.9,
+  "detail_oriented": 0.35,
+  "emotional_memory": 0.8,
+  "assertiveness": 0.85,
+  "cooperativeness": 0.4,
+  "openness": 0.95,
+  "rule_adherence": 0.4,
+  "roleplay_intensity": 0.85,
+  "base_decay_rate": 0.7
+}

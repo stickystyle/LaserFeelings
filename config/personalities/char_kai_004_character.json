@@ -1,0 +1,24 @@
+{
+  "character_id": "char_kai_004",
+  "agent_id": "agent_jordan_004",
+  "name": "Dr. Kai Chen",
+  "style": "Intrepid",
+  "role": "Scientist",
+  "number": 3,
+  "character_goal": "Discover new phenomena and expand scientific knowledge",
+  "equipment": [
+    "Tricorder",
+    "Sample containers",
+    "Research journal"
+  ],
+  "speech_patterns": [
+    "Explains concepts enthusiastically",
+    "Uses scientific terminology",
+    "Asks probing questions"
+  ],
+  "mannerisms": [
+    "Takes notes compulsively",
+    "Gets distracted by interesting phenomena",
+    "Adjusts glasses when thinking"
+  ]
+}

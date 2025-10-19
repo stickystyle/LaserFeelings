@@ -24,6 +24,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+pythonpath = ["."]
 addopts = ["-v", "--strict-markers"]
 
 [tool.ruff]
@@ -37,3 +38,8 @@ ignore = []
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.18.2",
+]

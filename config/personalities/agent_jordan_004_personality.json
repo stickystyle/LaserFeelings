@@ -1,0 +1,15 @@
+{
+  "agent_id": "agent_jordan_004",
+  "player_name": "Jordan",
+  "player_goal": "Experience rich story and balanced gameplay",
+  "analytical_score": 0.55,
+  "risk_tolerance": 0.55,
+  "detail_oriented": 0.6,
+  "emotional_memory": 0.55,
+  "assertiveness": 0.6,
+  "cooperativeness": 0.65,
+  "openness": 0.65,
+  "rule_adherence": 0.65,
+  "roleplay_intensity": 0.7,
+  "base_decay_rate": 0.5
+}
