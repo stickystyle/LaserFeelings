@@ -16,9 +16,10 @@ class MessageChannel(str, Enum):
 class MessageType(str, Enum):
     """Types of messages in the system"""
     NARRATION = "narration"  # DM narration
+    DIALOGUE = "dialogue"  # Character dialogue
     ACTION = "action"  # Character action
     REACTION = "reaction"  # Character reaction
-    STRATEGIC = "strategic"  # Player strategic discussion
+    DISCUSSION = "discussion"  # Player OOC discussion
     DIRECTIVE = "directive"  # Player -> Character directive
     SYSTEM = "system"  # System messages
 
@@ -39,9 +40,15 @@ class Message(BaseModel):
     )
     content: str
     timestamp: datetime
+    message_type: MessageType = Field(
+        description="Type of message being sent"
+    )
+    phase: str = Field(
+        description="Game phase when message was created"
+    )
 
     # Metadata
-    turn_number: int | None = None
+    turn_number: int
     session_number: int | None = None
 
     model_config = {"use_enum_values": True}

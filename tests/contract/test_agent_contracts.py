@@ -98,7 +98,7 @@ def sample_ooc_messages() -> list[Message]:
             timestamp=datetime.now(),
             turn_number=5,
             session_number=1,
-            message_type=MessageType.STRATEGIC,
+            message_type=MessageType.DISCUSSION,
             phase=GamePhase.OOC_DISCUSSION.value
         ),
         Message(
@@ -109,7 +109,7 @@ def sample_ooc_messages() -> list[Message]:
             timestamp=datetime.now(),
             turn_number=5,
             session_number=1,
-            message_type=MessageType.STRATEGIC,
+            message_type=MessageType.DISCUSSION,
             phase=GamePhase.OOC_DISCUSSION.value
         )
     ]
@@ -158,12 +158,23 @@ class TestBasePersonaAgentInterface:
         self,
         cautious_personality,
         sample_dm_narration,
-        sample_ooc_messages
+        sample_ooc_messages,
+        mock_openai_client,
+        mock_graphiti_client
     ):
         """Verify participate_in_ooc_discussion returns Message object"""
+        from unittest.mock import MagicMock, AsyncMock
+        from src.memory.corrupted_temporal import CorruptedTemporalMemory
+
+        # Create mock memory
+        mock_memory = MagicMock(spec=CorruptedTemporalMemory)
+        mock_memory.search = AsyncMock(return_value=[])
+
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            memory=mock_memory,
+            openai_client=mock_openai_client
         )
 
         result = await agent.participate_in_ooc_discussion(
@@ -183,12 +194,23 @@ class TestBasePersonaAgentInterface:
         self,
         cautious_personality,
         sample_dm_narration,
-        sample_ooc_messages
+        sample_ooc_messages,
+        mock_openai_client,
+        mock_graphiti_client
     ):
         """Verify agent queries memory before participating (behavioral requirement)"""
+        from unittest.mock import MagicMock, AsyncMock
+        from src.memory.corrupted_temporal import CorruptedTemporalMemory
+
+        # Create mock memory
+        mock_memory = MagicMock(spec=CorruptedTemporalMemory)
+        mock_memory.search = AsyncMock(return_value=[])
+
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            memory=mock_memory,
+            openai_client=mock_openai_client
         )
 
         # Mock memory system should be called
@@ -208,12 +230,23 @@ class TestBasePersonaAgentInterface:
         self,
         cautious_personality,
         sample_dm_narration,
-        sample_ooc_messages
+        sample_ooc_messages,
+        mock_openai_client,
+        mock_graphiti_client
     ):
         """Verify cautious personality affects response (risk_tolerance=0.2)"""
+        from unittest.mock import MagicMock, AsyncMock
+        from src.memory.corrupted_temporal import CorruptedTemporalMemory
+
+        # Create mock memory
+        mock_memory = MagicMock(spec=CorruptedTemporalMemory)
+        mock_memory.search = AsyncMock(return_value=[])
+
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            memory=mock_memory,
+            openai_client=mock_openai_client
         )
 
         # Modify narration to suggest risky action
@@ -236,12 +269,23 @@ class TestBasePersonaAgentInterface:
         self,
         cautious_personality,
         sample_dm_narration,
-        sample_ooc_messages
+        sample_ooc_messages,
+        mock_openai_client,
+        mock_graphiti_client
     ):
         """Verify player layer MUST NOT narrate in-character actions"""
+        from unittest.mock import MagicMock, AsyncMock
+        from src.memory.corrupted_temporal import CorruptedTemporalMemory
+
+        # Create mock memory
+        mock_memory = MagicMock(spec=CorruptedTemporalMemory)
+        mock_memory.search = AsyncMock(return_value=[])
+
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            memory=mock_memory,
+            openai_client=mock_openai_client
         )
 
         result = await agent.participate_in_ooc_discussion(
@@ -262,11 +306,16 @@ class TestBasePersonaAgentInterface:
                 f"Player layer must not narrate IC actions, found: {phrase}"
 
     @pytest.mark.asyncio
-    async def test_formulate_intent_returns_intent_object(self, cautious_personality):
+    async def test_formulate_intent_returns_intent_object(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify formulate_strategic_intent returns Intent structure"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         discussion_summary = "The group agrees to investigate the alley from two sides."
@@ -284,11 +333,16 @@ class TestBasePersonaAgentInterface:
         assert len(result.reasoning) > 0
 
     @pytest.mark.asyncio
-    async def test_formulate_intent_includes_risk_assessment(self, cautious_personality):
+    async def test_formulate_intent_includes_risk_assessment(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify Intent MUST include risk assessment (behavioral requirement)"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         discussion_summary = "We'll flank the enemy from both sides."
@@ -303,11 +357,16 @@ class TestBasePersonaAgentInterface:
         assert len(result.risk_assessment) > 0
 
     @pytest.mark.asyncio
-    async def test_formulate_intent_includes_fallback(self, cautious_personality):
+    async def test_formulate_intent_includes_fallback(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify Intent SHOULD provide fallback plan"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         discussion_summary = "Attempt to negotiate with the merchant."
@@ -320,11 +379,16 @@ class TestBasePersonaAgentInterface:
         assert hasattr(result, "fallback_plan")
 
     @pytest.mark.asyncio
-    async def test_create_directive_returns_directive_object(self, cautious_personality):
+    async def test_create_directive_returns_directive_object(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify create_character_directive returns Directive structure"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         # Mock intent and character state
@@ -349,11 +413,16 @@ class TestBasePersonaAgentInterface:
         assert result.to_character == "char_thrain"
 
     @pytest.mark.asyncio
-    async def test_directive_maintains_abstraction(self, cautious_personality):
+    async def test_directive_maintains_abstraction(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify directive doesn't dictate exact execution (MUST NOT requirement)"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         from unittest.mock import MagicMock
@@ -386,11 +455,16 @@ class TestBasePersonaAgentInterface:
                 f"Directive must not dictate exact execution, found: {phrase}"
 
     @pytest.mark.asyncio
-    async def test_directive_provides_emotional_tone(self, cautious_personality):
+    async def test_directive_provides_emotional_tone(
+        self,
+        cautious_personality,
+        mock_openai_client
+    ):
         """Verify directive SHOULD provide emotional tone guidance"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            openai_client=mock_openai_client
         )
 
         from unittest.mock import MagicMock
@@ -437,17 +511,25 @@ class TestCharacterAgentInterface:
         assert callable(agent.react_to_outcome)
 
     @pytest.mark.asyncio
-    async def test_perform_action_returns_action_object(self, thrain_character):
+    async def test_perform_action_returns_action_object(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify perform_action returns Action structure"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
-        from unittest.mock import MagicMock
-        directive = MagicMock()
-        directive.instruction = "Investigate the broken machinery"
-        directive.emotional_tone = "curious"
+        from src.models.agent_actions import Directive
+        directive = Directive(
+            from_player="agent_test",
+            to_character="char_thrain",
+            instruction="Investigate the broken machinery",
+            emotional_tone="curious"
+        )
 
         scene_context = "A workshop filled with damaged equipment"
 
@@ -463,17 +545,25 @@ class TestCharacterAgentInterface:
         assert len(result.action_text) > 0
 
     @pytest.mark.asyncio
-    async def test_action_expresses_intent_only(self, thrain_character):
+    async def test_action_expresses_intent_only(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify action expresses intent, never narrates outcomes (MUST NOT)"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
-        from unittest.mock import MagicMock
-        directive = MagicMock()
-        directive.instruction = "Attack the goblin"
-        directive.emotional_tone = "aggressive"
+        from src.models.agent_actions import Directive
+        directive = Directive(
+            from_player="agent_test",
+            to_character="char_thrain",
+            instruction="Attack the goblin",
+            emotional_tone="aggressive"
+        )
 
         scene_context = "A goblin blocks your path"
 
@@ -510,17 +600,25 @@ class TestCharacterAgentInterface:
             f"Action must not narrate outcomes, found forbidden language in: {result.action_text}"
 
     @pytest.mark.asyncio
-    async def test_action_uses_character_voice(self, thrain_character):
+    async def test_action_uses_character_voice(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify action uses character speech patterns and mannerisms"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
-        from unittest.mock import MagicMock
-        directive = MagicMock()
-        directive.instruction = "Greet the newcomer and offer help"
-        directive.emotional_tone = "friendly"
+        from src.models.agent_actions import Directive
+        directive = Directive(
+            from_player="agent_test",
+            to_character="char_thrain",
+            instruction="Greet the newcomer and offer help",
+            emotional_tone="friendly"
+        )
 
         scene_context = "A stranger enters the engineering bay"
 
@@ -543,17 +641,25 @@ class TestCharacterAgentInterface:
             assert len(result.dialogue) > 0
 
     @pytest.mark.asyncio
-    async def test_action_includes_mannerisms(self, thrain_character):
+    async def test_action_includes_mannerisms(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify action SHOULD add character mannerisms"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
-        from unittest.mock import MagicMock
-        directive = MagicMock()
-        directive.instruction = "Think about the problem"
-        directive.emotional_tone = "thoughtful"
+        from src.models.agent_actions import Directive
+        directive = Directive(
+            from_player="agent_test",
+            to_character="char_thrain",
+            instruction="Think about the problem",
+            emotional_tone="thoughtful"
+        )
 
         scene_context = "You examine the puzzle"
 
@@ -566,19 +672,25 @@ class TestCharacterAgentInterface:
         assert hasattr(result, "mannerisms")
 
     @pytest.mark.asyncio
-    async def test_react_returns_reaction_object(self, thrain_character):
+    async def test_react_returns_reaction_object(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify react_to_outcome returns Reaction structure"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
         dm_narration = "The machinery springs to life, systems humming perfectly."
 
-        from unittest.mock import MagicMock
-        emotional_state = MagicMock()
-        emotional_state.primary_emotion = "joy"
-        emotional_state.intensity = 0.8
+        from src.models.agent_actions import EmotionalState, PrimaryEmotion
+        emotional_state = EmotionalState(
+            primary_emotion=PrimaryEmotion.JOY,
+            intensity=0.8
+        )
 
         result = await agent.react_to_outcome(
             dm_narration=dm_narration,
@@ -592,19 +704,26 @@ class TestCharacterAgentInterface:
         assert len(result.reaction_text) > 0
 
     @pytest.mark.asyncio
-    async def test_reaction_no_new_actions(self, thrain_character):
+    async def test_reaction_no_new_actions(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify reaction doesn't initiate new actions (MUST NOT)"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
         dm_narration = "The goblin falls to the ground, defeated."
 
-        from unittest.mock import MagicMock
-        emotional_state = MagicMock()
-        emotional_state.primary_emotion = "relief"
-        emotional_state.intensity = 0.6
+        from src.models.agent_actions import EmotionalState, PrimaryEmotion
+        emotional_state = EmotionalState(
+            primary_emotion=PrimaryEmotion.NEUTRAL,
+            intensity=0.6,
+            secondary_emotions=["relief"]
+        )
 
         result = await agent.react_to_outcome(
             dm_narration=dm_narration,
@@ -628,19 +747,26 @@ class TestCharacterAgentInterface:
                 f"Reaction must not initiate new actions, found: {phrase}"
 
     @pytest.mark.asyncio
-    async def test_reaction_indicates_next_intent(self, thrain_character):
+    async def test_reaction_indicates_next_intent(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify reaction SHOULD indicate next desired action"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
         dm_narration = "The door opens to reveal a long corridor."
 
-        from unittest.mock import MagicMock
-        emotional_state = MagicMock()
-        emotional_state.primary_emotion = "curiosity"
-        emotional_state.intensity = 0.7
+        from src.models.agent_actions import EmotionalState, PrimaryEmotion
+        emotional_state = EmotionalState(
+            primary_emotion=PrimaryEmotion.SURPRISE,
+            intensity=0.7,
+            secondary_emotions=["curiosity"]
+        )
 
         result = await agent.react_to_outcome(
             dm_narration=dm_narration,
@@ -651,19 +777,25 @@ class TestCharacterAgentInterface:
         assert hasattr(result, "next_intent")
 
     @pytest.mark.asyncio
-    async def test_reaction_reflects_emotional_state(self, thrain_character):
+    async def test_reaction_reflects_emotional_state(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
         """Verify reaction MUST reflect emotional state"""
         agent = CharacterAgent(
             character_id="char_thrain",
-            character_sheet=thrain_character
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
         )
 
         dm_narration = "The explosion rocks the ship, alarms blaring."
 
-        from unittest.mock import MagicMock
-        emotional_state = MagicMock()
-        emotional_state.primary_emotion = "fear"
-        emotional_state.intensity = 0.9
+        from src.models.agent_actions import EmotionalState, PrimaryEmotion
+        emotional_state = EmotionalState(
+            primary_emotion=PrimaryEmotion.FEAR,
+            intensity=0.9
+        )
 
         result = await agent.react_to_outcome(
             dm_narration=dm_narration,

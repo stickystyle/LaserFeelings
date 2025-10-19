@@ -25,3 +25,13 @@ class NoConsensusReached(Exception):
 class InvalidMessageFormat(Exception):
     """Raised when message doesn't match expected schema"""
     pass
+
+
+class CharacterNotFound(Exception):
+    """Raised when specified character doesn't exist"""
+    pass
+
+
+class InvalidCharacterState(Exception):
+    """Raised when character state prevents action or is corrupted"""
+    pass

@@ -1,0 +1,379 @@
+# ABOUTME: Strategic decision-making agent representing the "player" layer in dual architecture.
+# ABOUTME: Handles OOC discussion, strategic intent formulation, and directive creation for character layer.
+
+import json
+from datetime import datetime
+from uuid import uuid4
+
+from openai import AsyncOpenAI
+
+from src.agents.exceptions import (
+    CharacterNotFound,
+    InvalidCharacterState,
+    InvalidMessageFormat,
+    LLMCallFailed,
+    NoConsensusReached,
+)
+from src.agents.llm_client import LLMClient
+from src.memory.corrupted_temporal import CorruptedTemporalMemory
+from src.models.agent_actions import CharacterState, Directive, Intent
+from src.models.game_state import GamePhase
+from src.models.messages import Message, MessageChannel, MessageType
+from src.models.personality import PlayerPersonality
+
+
+class BasePersonaAgent:
+    """
+    Strategic decision-making agent (player layer).
+
+    Operates out-of-character to make strategic decisions, participate in
+    group discussions, and issue high-level directives to character layer.
+    """
+
+    def __init__(
+        self,
+        agent_id: str,
+        personality: PlayerPersonality,
+        memory: CorruptedTemporalMemory | None = None,
+        openai_client: AsyncOpenAI | None = None,
+        model: str = "gpt-4o",
+        temperature: float = 0.7,
+    ):
+        """
+        Initialize BasePersona agent.
+
+        Args:
+            agent_id: Unique identifier for this agent (e.g., 'agent_alex_001')
+            personality: Player personality traits affecting decision-making
+            memory: Memory interface for retrieving past experiences (optional for testing)
+            openai_client: AsyncOpenAI client for LLM calls (optional for testing)
+            model: OpenAI model to use (default: gpt-4o)
+            temperature: LLM temperature for response variation (default: 0.7)
+        """
+        self.agent_id = agent_id
+        self.personality = personality
+        self._memory = memory
+        self._openai_client = openai_client
+        self._llm_client = LLMClient(openai_client, model) if openai_client else None
+        self.temperature = temperature
+
+    async def participate_in_ooc_discussion(
+        self,
+        dm_narration: str,
+        other_messages: list[Message],
+    ) -> Message:
+        """
+        Contribute to out-of-character strategy discussion.
+
+        Behavior:
+        - MUST retrieve relevant memories before generating response
+        - MUST apply personality traits to decision-making
+        - SHOULD reference past experiences in reasoning
+        - MUST NOT narrate in-character actions (player layer only)
+
+        Args:
+            dm_narration: Current scene from DM
+            other_messages: Other players' OOC messages
+
+        Returns:
+            Message on out_of_character channel
+
+        Raises:
+            RuntimeError: When memory or openai_client not provided to constructor
+            LLMCallFailed: When OpenAI API call fails after retries
+            InvalidMessageFormat: When generated message doesn't match schema
+        """
+        # Validate dependencies at runtime
+        if not self._memory or not self._llm_client:
+            raise RuntimeError(
+                "BasePersonaAgent requires memory and openai_client to be initialized. "
+                "Provide these dependencies in the constructor."
+            )
+
+        # Extract session and turn info from other_messages if available
+        session_number = None
+        turn_number = None
+        if other_messages:
+            session_number = other_messages[0].session_number
+            turn_number = other_messages[0].turn_number
+
+        # Retrieve relevant memories
+        query = f"DM narration: {dm_narration[:200]}"
+        memories = await self._memory.search(
+            query=query,
+            agent_id=self.agent_id,
+            session_number=session_number,
+            limit=5,
+        )
+
+        # Build context from memories
+        memory_context = "\n".join([
+            f"- {mem.fact} (confidence: {mem.confidence:.2f})"
+            for mem in memories[:3]
+        ])
+
+        # Build context from other messages
+        discussion_context = "\n".join([
+            f"{msg.from_agent}: {msg.content}"
+            for msg in other_messages[-5:]  # Last 5 messages
+        ])
+
+        # Build personality-aware system prompt
+        decision_style = self.personality.decision_style
+        risk_level = "cautious" if self.personality.risk_tolerance < 0.4 else \
+                     "bold" if self.personality.risk_tolerance > 0.7 else "balanced"
+        cooperation_style = "collaborative" if self.personality.cooperativeness > 0.6 else "independent"
+
+        system_prompt = f"""You are a TTRPG player participating in strategic discussion.
+
+Your personality traits:
+- Decision style: {decision_style}
+- Risk tolerance: {risk_level}
+- Cooperation style: {cooperation_style}
+- Analytical score: {self.personality.analytical_score:.2f}
+
+You are discussing strategy OUT OF CHARACTER. Do not roleplay your character.
+Focus on tactical analysis and strategic planning.
+"""
+
+        user_prompt = f"""Current situation:
+DM: {dm_narration}
+
+Your relevant memories:
+{memory_context if memory_context else "No relevant memories found."}
+
+Recent discussion:
+{discussion_context if discussion_context else "You are first to speak."}
+
+Provide your strategic input for the group. Consider:
+1. What are the risks and opportunities?
+2. What approach aligns with your {risk_level} risk tolerance?
+3. How can the group work together effectively?
+
+Keep response under 200 words. Be conversational but strategic.
+"""
+
+        try:
+            content = await self._llm_client.call(
+                system_prompt, user_prompt, temperature=self.temperature
+            )
+
+            # Validate message length
+            if len(content) > 2000:
+                content = content[:1997] + "..."
+
+            # Create Message object with required fields
+            message = Message(
+                message_id=str(uuid4()),
+                channel=MessageChannel.OOC,
+                from_agent=self.agent_id,
+                to_agents=None,  # Broadcast
+                content=content,
+                timestamp=datetime.now(),
+                message_type=MessageType.DISCUSSION,
+                phase=GamePhase.OOC_DISCUSSION.value,
+                turn_number=turn_number or 1,
+                session_number=session_number,
+            )
+
+            return message
+
+        except Exception as e:
+            raise InvalidMessageFormat(f"Failed to create valid message: {e}") from e
+
+    async def formulate_strategic_intent(
+        self,
+        discussion_summary: str,
+    ) -> Intent:
+        """
+        Decide high-level strategic goal from OOC discussion.
+
+        Behavior:
+        - MUST synthesize discussion into actionable intent
+        - MUST include risk assessment
+        - SHOULD provide fallback plan
+        - MUST align with agent personality traits
+
+        Args:
+            discussion_summary: Consensus from OOC discussion
+
+        Returns:
+            Intent with strategic_goal, reasoning, risk_assessment
+
+        Raises:
+            RuntimeError: When openai_client not provided to constructor
+            NoConsensusReached: When discussion lacks clear direction
+            LLMCallFailed: When OpenAI API call fails
+        """
+        # Validate dependencies at runtime
+        if not self._llm_client:
+            raise RuntimeError(
+                "BasePersonaAgent requires openai_client to be initialized. "
+                "Provide this dependency in the constructor."
+            )
+
+        # If no discussion summary, we lack consensus
+        if not discussion_summary or not discussion_summary.strip():
+            raise NoConsensusReached("Empty discussion summary provided")
+
+        # Build personality-aware system prompt
+        system_prompt = f"""You are a strategic TTRPG player formulating your intent.
+
+Your personality:
+- Risk tolerance: {self.personality.risk_tolerance:.2f} (0=cautious, 1=reckless)
+- Analytical score: {self.personality.analytical_score:.2f} (0=intuitive, 1=logical)
+- Cooperativeness: {self.personality.cooperativeness:.2f}
+
+Based on group discussion, formulate YOUR strategic intent.
+"""
+
+        user_prompt = f"""Group discussion summary:
+{discussion_summary}
+
+Formulate your strategic intent as JSON with:
+{{
+  "strategic_goal": "High-level objective you want to achieve",
+  "reasoning": "Why this approach makes sense",
+  "risk_assessment": "Identified risks and mitigation",
+  "fallback_plan": "Alternative if primary fails"
+}}
+
+Ensure your intent reflects your personality traits.
+"""
+
+        try:
+            response = await self._llm_client.call(
+                system_prompt,
+                user_prompt,
+                temperature=self.temperature,
+                response_format={"type": "json_object"},
+            )
+
+            # Parse JSON response
+            data = json.loads(response)
+
+            # Create Intent object
+            intent = Intent(
+                agent_id=self.agent_id,
+                strategic_goal=data.get("strategic_goal", ""),
+                reasoning=data.get("reasoning", ""),
+                risk_assessment=data.get("risk_assessment"),
+                fallback_plan=data.get("fallback_plan"),
+            )
+
+            # Validate required fields
+            if not intent.strategic_goal or not intent.reasoning:
+                raise NoConsensusReached("LLM failed to provide complete intent")
+
+            return intent
+
+        except json.JSONDecodeError as e:
+            raise LLMCallFailed(f"Failed to parse LLM JSON response: {e}") from e
+
+    async def create_character_directive(
+        self,
+        intent: Intent,
+        character_state: CharacterState,
+    ) -> Directive:
+        """
+        Issue high-level instruction to character agent.
+
+        Behavior:
+        - MUST translate strategic intent into actionable directive
+        - SHOULD consider character's current emotional/physical state
+        - MUST NOT dictate exact dialogue or mannerisms
+        - SHOULD provide emotional tone guidance
+
+        Args:
+            intent: Strategic intent from player layer
+            character_state: Current character state for context
+
+        Returns:
+            Directive with instruction, tactical_guidance, emotional_tone
+
+        Raises:
+            RuntimeError: When openai_client not provided to constructor
+            CharacterNotFound: When character_id doesn't exist
+            InvalidCharacterState: When state is corrupted
+            LLMCallFailed: When OpenAI API call fails
+        """
+        # Validate dependencies at runtime
+        if not self._llm_client:
+            raise RuntimeError(
+                "BasePersonaAgent requires openai_client to be initialized. "
+                "Provide this dependency in the constructor."
+            )
+
+        # Validate character_state is not None and has required fields
+        if not character_state:
+            raise CharacterNotFound("Character state is None")
+
+        if not character_state.character_id:
+            raise InvalidCharacterState("Character state missing character_id")
+
+        # Validate character_state is not corrupted (basic sanity checks)
+        if character_state.character_id and not character_state.character_id.startswith("char_"):
+            raise InvalidCharacterState(
+                f"Invalid character_id format: {character_state.character_id}"
+            )
+
+        system_prompt = f"""You are a TTRPG player issuing a directive to your character.
+
+Your role: Translate strategic intent into character-level instruction.
+- Specify WHAT to do, not HOW to do it
+- Do NOT write dialogue or specific mannerisms
+- Provide emotional tone/approach guidance
+- Trust character layer to interpret appropriately
+
+Your personality:
+- Risk tolerance: {self.personality.risk_tolerance:.2f}
+- Roleplay intensity: {self.personality.roleplay_intensity:.2f}
+"""
+
+        user_prompt = f"""Strategic intent:
+Goal: {intent.strategic_goal}
+Reasoning: {intent.reasoning}
+Risks: {intent.risk_assessment or "None identified"}
+
+Character current state:
+Location: {character_state.current_location or "Unknown"}
+Health: {character_state.health_status or "Normal"}
+Emotional state: {character_state.emotional_state or "Neutral"}
+Active effects: {', '.join(character_state.active_effects) if character_state.active_effects else "None"}
+
+Create a directive as JSON:
+{{
+  "instruction": "What character should do (high-level action)",
+  "tactical_guidance": "Optional tactical approach suggestions",
+  "emotional_tone": "How character should feel/approach this"
+}}
+
+Keep instruction abstract - let character layer handle roleplay details.
+"""
+
+        try:
+            response = await self._llm_client.call(
+                system_prompt,
+                user_prompt,
+                temperature=self.temperature,
+                response_format={"type": "json_object"},
+            )
+
+            data = json.loads(response)
+
+            directive = Directive(
+                from_player=self.agent_id,
+                to_character=character_state.character_id,
+                instruction=data.get("instruction", ""),
+                tactical_guidance=data.get("tactical_guidance"),
+                emotional_tone=data.get("emotional_tone"),
+            )
+
+            # Validate instruction is present
+            if not directive.instruction:
+                raise LLMCallFailed("Directive missing required instruction field")
+
+            return directive
+
+        except json.JSONDecodeError as e:
+            raise LLMCallFailed(f"Failed to parse directive JSON: {e}") from e

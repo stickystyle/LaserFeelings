@@ -122,11 +122,74 @@ def mock_openai_client():
     def dynamic_response(*args, **kwargs):
         """Return contextual LLM responses based on input"""
         messages = kwargs.get("messages", [])
-        last_message = messages[-1].get("content", "") if messages else ""
-        last_content = last_message.lower()
+        # Combine all message content for better matching
+        all_content = " ".join([msg.get("content", "") for msg in messages])
+        last_content = all_content.lower()
 
         # Return contextual responses based on prompt content
-        if "strategic" in last_content or "intent" in last_content:
+        # Check for specific JSON response formats first - ORDER MATTERS!
+        # Most specific checks first, then more general ones
+        if ("reaction_text" in last_content or "your current emotional state" in last_content or "primary emotion" in last_content or "dm narration" in last_content) and "json" in last_content:
+            # Reaction to outcome - context-aware responses
+            reaction_text = "Fascinating. The readings are quite unusual."
+            dialogue_text = "Well I'll be, lad. Never seen anything quite like this."
+
+            if "explosion" in last_content or "fear" in last_content:
+                reaction_text = "The ship lurches violently and I grab onto the console for support"
+                dialogue_text = "By the stars! We need to stabilize the ship immediately!"
+            elif "machinery" in last_content or "joy" in last_content:
+                reaction_text = "A satisfied smile spreads across my face as the systems hum to life"
+                dialogue_text = "Excellent! Just as I calculated, lad."
+            elif "goblin" in last_content or "relief" in last_content or "neutral" in last_content:
+                reaction_text = "I let out a breath I didn't know I was holding"
+                dialogue_text = "Well, that's one less problem to worry about."
+            elif "corridor" in last_content or "surprise" in last_content:
+                reaction_text = "I peer down the long corridor with curiosity"
+                dialogue_text = "Interesting. Let's see what lies ahead."
+
+            content = json.dumps({
+                "character_id": "char_thrain",
+                "reaction_text": reaction_text,
+                "dialogue": dialogue_text,
+                "next_intent": "Continue analyzing the situation"
+            })
+        elif "strategic_goal" in last_content and "json" in last_content:
+            # Intent formulation
+            content = json.dumps({
+                "agent_id": "agent_test",
+                "strategic_goal": "Carefully assess the situation and proceed cautiously",
+                "reasoning": "Given the unknown factors, a cautious approach minimizes risk",
+                "risk_assessment": "Moderate risk due to unknown threats",
+                "fallback_plan": "Retreat if situation becomes too dangerous"
+            })
+        elif ("from_player" in last_content or "to_character" in last_content or "instruction" in last_content) and "json" in last_content:
+            # Directive creation - extract context from the prompt
+            instruction_text = "Investigate the area carefully"
+            emotion_tone = "cautious"
+
+            # Try to extract actual intent from prompt
+            if "intimidate" in last_content:
+                instruction_text = "Attempt to intimidate them with your presence and authority"
+                emotion_tone = "confident"
+            elif "comfort" in last_content:
+                instruction_text = "Offer reassurance and support"
+                emotion_tone = "compassionate"
+
+            content = json.dumps({
+                "from_player": "agent_test",
+                "to_character": "char_thrain",
+                "instruction": instruction_text,
+                "emotional_tone": emotion_tone
+            })
+        elif "action_text" in last_content and "json" in last_content:
+            # Action performance
+            content = json.dumps({
+                "character_id": "char_thrain",
+                "action_text": "I attempt to scan the area with my tricorder, looking for signs of life.",
+                "dialogue": "Let me check these readings, lad.",
+                "mannerisms": "Taps fingers on the tricorder while waiting for results"
+            })
+        elif "strategic" in last_content or "intent" in last_content:
             content = "Carefully examine the situation before acting. Assess risks."
         elif "directive" in last_content or "character" in last_content:
             content = "Use your scanner to gather information about the area."

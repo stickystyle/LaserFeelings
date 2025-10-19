@@ -163,19 +163,19 @@ Steps:
 
 ### Agent Layer Implementation for User Story 1
 
-- [ ] T038 [P] [US1] Implement BasePersonaAgent with strategic decision-making in src/agents/base_persona.py
+- [X] T038 [P] [US1] Implement BasePersonaAgent with strategic decision-making in src/agents/base_persona.py
   - **Reference**: contracts/agent_interface.yaml (BasePersonaAgent interface), data-model.md §1.1 (AgentPersonality)
-- [ ] T039 [P] [US1] Implement CharacterAgent with in-character roleplay in src/agents/character.py
+- [X] T039 [P] [US1] Implement CharacterAgent with in-character roleplay in src/agents/character.py
   - **Reference**: contracts/agent_interface.yaml (CharacterAgent interface), data-model.md §1.2 (CharacterSheet)
-- [ ] T040 [US1] Add participate_in_ooc_discussion() method to BasePersonaAgent
+- [X] T040 [US1] Add participate_in_ooc_discussion() method to BasePersonaAgent
   - **Reference**: contracts/agent_interface.yaml (method spec + behavior requirements), research.md §4 (LLM call pattern)
-- [ ] T041 [US1] Add formulate_strategic_intent() method to BasePersonaAgent
+- [X] T041 [US1] Add formulate_strategic_intent() method to BasePersonaAgent
   - **Reference**: contracts/agent_interface.yaml (Intent output schema), data-model.md §3.2 (Intent model)
-- [ ] T042 [US1] Add create_character_directive() method to BasePersonaAgent
+- [X] T042 [US1] Add create_character_directive() method to BasePersonaAgent
   - **Reference**: contracts/agent_interface.yaml (Directive output schema), data-model.md §3.2 (Directive model)
-- [ ] T043 [US1] Add perform_action() method to CharacterAgent
+- [X] T043 [US1] Add perform_action() method to CharacterAgent
   - **Reference**: contracts/agent_interface.yaml (behavior: intent only, no outcomes), research.md §4 (validation patterns)
-- [ ] T044 [US1] Add react_to_outcome() method to CharacterAgent
+- [X] T044 [US1] Add react_to_outcome() method to CharacterAgent
   - **Reference**: contracts/agent_interface.yaml (Reaction schema), data-model.md §1.2 (speech patterns)
 
 ### Orchestration Layer Implementation for User Story 1
