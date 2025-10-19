@@ -180,44 +180,44 @@ Steps:
 
 ### Orchestration Layer Implementation for User Story 1
 
-- [ ] T045 [US1] Implement MessageRouter with channel-based visibility in src/orchestration/message_router.py
+- [X] T045 [US1] Implement MessageRouter with channel-based visibility in src/orchestration/message_router.py
   - **Reference**: research.md §6 (Three-Channel Message Routing - complete MessageRouter class), data-model.md §4.1 (Message model)
-- [ ] T046 [US1] Implement LangGraph state machine with GamePhase transitions in src/orchestration/state_machine.py
+- [X] T046 [US1] Implement LangGraph state machine with GamePhase transitions in src/orchestration/state_machine.py
   - **Reference**: research.md §1 (LangGraph State Machine - workflow build example), data-model.md §3.1 (GameState + GamePhase)
-- [ ] T047 [US1] Add DM_NARRATION phase handler to state machine
+- [X] T047 [US1] Add DM_NARRATION phase handler to state machine
   - **Reference**: research.md §1 (node function pattern), data-model.md §3.1 (phase sequence)
-- [ ] T048 [US1] Add MEMORY_RETRIEVAL phase handler to state machine
+- [X] T048 [US1] Add MEMORY_RETRIEVAL phase handler to state machine
   - **Reference**: research.md §2 (memory query), research.md §1 (node returns new state dict)
-- [ ] T049 [US1] Add STRATEGIC_INTENT phase handler to state machine
+- [X] T049 [US1] Add STRATEGIC_INTENT phase handler to state machine
   - **Reference**: contracts/agent_interface.yaml (formulate_strategic_intent), research.md §3 (RQ job dispatch)
-- [ ] T050 [US1] Add P2C_DIRECTIVE phase handler to state machine
+- [X] T050 [US1] Add P2C_DIRECTIVE phase handler to state machine
   - **Reference**: contracts/agent_interface.yaml (create_character_directive method)
-- [ ] T051 [US1] Add CHARACTER_ACTION phase handler to state machine
+- [X] T051 [US1] Add CHARACTER_ACTION phase handler to state machine
   - **Reference**: contracts/agent_interface.yaml (perform_action), research.md §3 (worker dispatch + blocking)
-- [ ] T052 [US1] Add DM_ADJUDICATION phase handler to state machine
+- [X] T052 [US1] Add DM_ADJUDICATION phase handler to state machine
   - **Reference**: data-model.md §3.1 (phase transitions), quickstart.md (DM commands)
-- [ ] T053 [US1] Add DICE_RESOLUTION phase handler to state machine
+- [X] T053 [US1] Add DICE_RESOLUTION phase handler to state machine
   - **Reference**: data-model.md §5.2 (DiceRoll), src/utils/dice.py (dice roller)
-- [ ] T054 [US1] Add DM_OUTCOME phase handler to state machine
+- [X] T054 [US1] Add DM_OUTCOME phase handler to state machine
   - **Reference**: data-model.md §3.1 (phase flow to CHARACTER_REACTION)
-- [ ] T055 [US1] Add CHARACTER_REACTION phase handler to state machine
+- [X] T055 [US1] Add CHARACTER_REACTION phase handler to state machine
   - **Reference**: contracts/agent_interface.yaml (react_to_outcome method)
-- [ ] T056 [US1] Add MEMORY_CONSOLIDATION phase handler to state machine
+- [X] T056 [US1] Add MEMORY_CONSOLIDATION phase handler to state machine
   - **Reference**: research.md §2 (add_episode), data-model.md §2.1 (MemoryEdge creation)
-- [ ] T057 [US1] Implement phase rollback and retry logic with error recovery
+- [X] T057 [US1] Implement phase rollback and retry logic with error recovery
   - **Reference**: research.md §1 (conditional edges for retry), data-model.md §3.2 (ValidationResult)
-- [ ] T058 [US1] Add LangGraph checkpointing for game state persistence
+- [X] T058 [US1] Add LangGraph checkpointing for game state persistence
   - **Reference**: research.md §1 (checkpointer=MemorySaver(), checkpointing best practices)
 
 ### Worker Layer Implementation for User Story 1
 
-- [ ] T059 [P] [US1] Implement RQ worker for BasePersonaAgent in src/workers/base_persona_worker.py
+- [X] T059 [P] [US1] Implement RQ worker for BasePersonaAgent in src/workers/base_persona_worker.py
   - **Reference**: research.md §3 (RQ worker function pattern, must import at module level)
-- [ ] T060 [P] [US1] Implement RQ worker for CharacterAgent in src/workers/character_worker.py
+- [X] T060 [P] [US1] Implement RQ worker for CharacterAgent in src/workers/character_worker.py
   - **Reference**: research.md §3 (character_agent_perform_action example)
-- [ ] T061 [US1] Configure RQ queues with timeout and retry settings
+- [X] T061 [US1] Configure RQ queues with timeout and retry settings
   - **Reference**: research.md §3 (Worker Configuration section, queue creation)
-- [ ] T062 [US1] Implement exponential backoff for LLM API failures
+- [X] T062 [US1] Implement exponential backoff for LLM API failures
   - **Reference**: research.md §3 (Exponential Backoff for LLM API Failures - complete @retry decorator)
 
 ### DM Interface Implementation for User Story 1

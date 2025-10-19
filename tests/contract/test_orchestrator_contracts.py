@@ -1,4 +1,4 @@
-# ABOUTME: Contract tests for TtrpgOrchestrator, MessageRouter, and ConsensusDetector interfaces (T031).
+# ABOUTME: Contract tests for TurnOrchestrator, MessageRouter, and ConsensusDetector interfaces (T031).
 # ABOUTME: Tests verify interface compliance with orchestrator_interface.yaml contract specifications.
 
 import pytest
@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from typing import TypedDict
 
 # These imports will fail until implementations exist (TDD phase)
-from src.orchestrator.langgraph_orchestrator import TtrpgOrchestrator
-from src.orchestrator.message_router import MessageRouter
-from src.orchestrator.consensus_detector import ConsensusDetector
+from src.orchestration.state_machine import TurnOrchestrator
+from src.orchestration.message_router import MessageRouter
+# ConsensusDetector will be implemented in Phase 7 (User Story 5, T139-T145)
+# from src.orchestration.consensus_detector import ConsensusDetector
 
 from src.models.game_state import (
     GameState,
@@ -20,8 +21,33 @@ from src.models.game_state import (
 )
 from src.models.messages import Message, MessageChannel, MessageType, DMCommand, DMCommandType
 
+# Try to import fakeredis for testing, fall back to unittest.mock if not available
+try:
+    import fakeredis
+    HAS_FAKEREDIS = True
+except ImportError:
+    HAS_FAKEREDIS = False
+    from unittest.mock import MagicMock
+
 
 # --- Test Fixtures ---
+
+@pytest.fixture
+def redis_client():
+    """Provide a Redis client for testing (uses fakeredis if available, otherwise mocks)"""
+    if HAS_FAKEREDIS:
+        return fakeredis.FakeRedis(decode_responses=False)
+    else:
+        # Mock Redis for basic contract tests
+        mock_redis = MagicMock()
+        mock_redis.rpush = MagicMock(return_value=1)
+        mock_redis.lrange = MagicMock(return_value=[])
+        mock_redis.expire = MagicMock(return_value=True)
+        mock_redis.delete = MagicMock(return_value=1)
+        mock_redis.sadd = MagicMock(return_value=1)
+        mock_redis.sscan_iter = MagicMock(return_value=iter([]))
+        return mock_redis
+
 
 @pytest.fixture
 def initial_game_state() -> GameState:
@@ -164,38 +190,38 @@ def p2c_message() -> Message:
     )
 
 
-# --- T031: TtrpgOrchestrator Interface Tests ---
+# --- T031: TurnOrchestrator Interface Tests ---
 
-class TestTtrpgOrchestratorInterface:
-    """Test TtrpgOrchestrator interface compliance per orchestrator_interface.yaml"""
+class TestTurnOrchestratorInterface:
+    """Test TurnOrchestrator interface compliance per orchestrator_interface.yaml"""
 
-    def test_orchestrator_has_execute_turn_cycle_method(self):
+    def test_orchestrator_has_execute_turn_cycle_method(self, redis_client):
         """Verify execute_turn_cycle method exists with correct signature"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Method must exist
         assert hasattr(orchestrator, "execute_turn_cycle")
         assert callable(orchestrator.execute_turn_cycle)
 
-    def test_orchestrator_has_transition_method(self):
+    def test_orchestrator_has_transition_method(self, redis_client):
         """Verify transition_to_phase method exists"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Method must exist
         assert hasattr(orchestrator, "transition_to_phase")
         assert callable(orchestrator.transition_to_phase)
 
-    def test_orchestrator_has_rollback_method(self):
+    def test_orchestrator_has_rollback_method(self, redis_client):
         """Verify rollback_to_phase method exists"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Method must exist
         assert hasattr(orchestrator, "rollback_to_phase")
         assert callable(orchestrator.rollback_to_phase)
 
-    def test_orchestrator_has_validate_phase_action_method(self):
+    def test_orchestrator_has_validate_phase_action_method(self, redis_client):
         """Verify validate_phase_action method exists"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Method must exist
         assert hasattr(orchestrator, "validate_phase_action")
@@ -208,7 +234,7 @@ class TestTtrpgOrchestratorInterface:
         sample_dm_command
     ):
         """Verify execute_turn_cycle returns TurnResult structure"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Initialize with game state
         orchestrator.state = initial_game_state
@@ -227,7 +253,7 @@ class TestTtrpgOrchestratorInterface:
     @pytest.mark.asyncio
     async def test_execute_turn_parses_dm_command(self, sample_dm_command):
         """Verify orchestrator parses DM command (MUST requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.execute_turn_cycle(
             dm_input=sample_dm_command
@@ -243,7 +269,7 @@ class TestTtrpgOrchestratorInterface:
         sample_dm_command
     ):
         """Verify orchestrator validates current phase allows command (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
         orchestrator.state = initial_game_state
 
         # When in DM_NARRATION phase, narrate command should be allowed
@@ -255,9 +281,9 @@ class TestTtrpgOrchestratorInterface:
         assert result.success is True or isinstance(result.success, bool)
 
     @pytest.mark.asyncio
-    async def test_execute_turn_checkpoints_after_each_phase(self):
+    async def test_execute_turn_checkpoints_after_each_phase(self, redis_client):
         """Verify state checkpointed after each phase (MUST requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Behavioral requirement: MUST checkpoint state after each phase
         # This requires verifying checkpoints are created
@@ -269,9 +295,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_execute_turn_dispatches_agent_jobs(self):
+    async def test_execute_turn_dispatches_agent_jobs(self, redis_client):
         """Verify agent jobs dispatched to RQ queues (MUST requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Behavioral requirement: MUST dispatch agent jobs to RQ queues
         result = await orchestrator.execute_turn_cycle(
@@ -281,9 +307,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_execute_turn_waits_for_all_agents(self):
+    async def test_execute_turn_waits_for_all_agents(self, redis_client):
         """Verify orchestrator waits for all agent completions (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         # Behavioral requirement: MUST wait for all agent completions before proceeding
         result = await orchestrator.execute_turn_cycle(
@@ -293,9 +319,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_execute_turn_completes_within_timeout(self):
+    async def test_execute_turn_completes_within_timeout(self, redis_client):
         """Verify normal turn completes within 20s (SHOULD requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         start_time = datetime.now()
 
@@ -310,9 +336,9 @@ class TestTtrpgOrchestratorInterface:
         assert duration < 30  # Allow some margin
 
     @pytest.mark.asyncio
-    async def test_transition_to_phase_validates_transition(self):
+    async def test_transition_to_phase_validates_transition(self, redis_client):
         """Verify transition_to_phase validates legal transitions (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.transition_to_phase(
             phase="memory_query"
@@ -324,9 +350,9 @@ class TestTtrpgOrchestratorInterface:
         assert isinstance(result["success"], bool)
 
     @pytest.mark.asyncio
-    async def test_transition_updates_game_state(self):
+    async def test_transition_updates_game_state(self, redis_client):
         """Verify transition updates GameState.current_phase (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         previous_phase = orchestrator.state.get("current_phase") if hasattr(orchestrator, "state") else None
 
@@ -340,9 +366,9 @@ class TestTtrpgOrchestratorInterface:
             assert result["new_phase"] == "strategic_intent"
 
     @pytest.mark.asyncio
-    async def test_transition_checkpoints_state(self):
+    async def test_transition_checkpoints_state(self, redis_client):
         """Verify transition checkpoints state (MUST requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.transition_to_phase(
             phase="ooc_discussion"
@@ -352,9 +378,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_transition_logs_for_observability(self):
+    async def test_transition_logs_for_observability(self, redis_client):
         """Verify transition logs for observability (SHOULD)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.transition_to_phase(
             phase="character_action"
@@ -365,9 +391,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_rollback_restores_from_checkpoint(self):
+    async def test_rollback_restores_from_checkpoint(self, redis_client):
         """Verify rollback restores GameState from checkpoint (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.rollback_to_phase(
             target_phase="strategic_intent",
@@ -380,9 +406,9 @@ class TestTtrpgOrchestratorInterface:
         assert "rolled_back_to" in result
 
     @pytest.mark.asyncio
-    async def test_rollback_clears_partial_results(self):
+    async def test_rollback_clears_partial_results(self, redis_client):
         """Verify rollback clears partial results from failed phase (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.rollback_to_phase(
             target_phase="ooc_discussion",
@@ -393,9 +419,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_rollback_logs_reason(self):
+    async def test_rollback_logs_reason(self, redis_client):
         """Verify rollback logs reason (MUST requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.rollback_to_phase(
             target_phase="dm_narration",
@@ -406,9 +432,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_rollback_notifies_dm(self):
+    async def test_rollback_notifies_dm(self, redis_client):
         """Verify rollback notifies DM (SHOULD requirement)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.rollback_to_phase(
             target_phase="character_action",
@@ -419,9 +445,9 @@ class TestTtrpgOrchestratorInterface:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_validate_phase_action_enforces_permissions(self):
+    async def test_validate_phase_action_enforces_permissions(self, redis_client):
         """Verify phase action validation enforces phase-based permissions (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.validate_phase_action(
             agent_id="char_thrain",
@@ -436,9 +462,9 @@ class TestTtrpgOrchestratorInterface:
         assert "reason" in result
 
     @pytest.mark.asyncio
-    async def test_validate_prevents_characters_in_ooc(self):
+    async def test_validate_prevents_characters_in_ooc(self, redis_client):
         """Verify characters prevented from acting in OOC phase (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.validate_phase_action(
             agent_id="char_thrain",
@@ -450,9 +476,9 @@ class TestTtrpgOrchestratorInterface:
         assert result["allowed"] is False
 
     @pytest.mark.asyncio
-    async def test_validate_prevents_players_in_ic(self):
+    async def test_validate_prevents_players_in_ic(self, redis_client):
         """Verify base personas prevented from acting in IC phase (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         result = await orchestrator.validate_phase_action(
             agent_id="agent_alex",
@@ -469,7 +495,7 @@ class TestTtrpgOrchestratorInterface:
 class TestMessageRouterInterface:
     """Test MessageRouter interface compliance per orchestrator_interface.yaml"""
 
-    def test_router_has_route_message_method(self):
+    def test_router_has_route_message_method(self, redis_client):
         """Verify route_message method exists"""
         router = MessageRouter()
 
@@ -477,7 +503,7 @@ class TestMessageRouterInterface:
         assert hasattr(router, "route_message")
         assert callable(router.route_message)
 
-    def test_router_has_get_messages_method(self):
+    def test_router_has_get_messages_method(self, redis_client):
         """Verify get_messages_for_agent method exists"""
         router = MessageRouter()
 
@@ -511,7 +537,7 @@ class TestMessageRouterInterface:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_route_enforces_ooc_visibility(self):
+    async def test_route_enforces_ooc_visibility(self, redis_client):
         """Verify OOC messages only visible to base personas (MUST)"""
         router = MessageRouter()
 
@@ -567,7 +593,7 @@ class TestMessageRouterInterface:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_get_messages_filters_by_visibility(self):
+    async def test_get_messages_filters_by_visibility(self, redis_client):
         """Verify get_messages_for_agent filters by visibility rules (MUST)"""
         router = MessageRouter()
 
@@ -583,7 +609,7 @@ class TestMessageRouterInterface:
         assert isinstance(result["messages"], list)
 
     @pytest.mark.asyncio
-    async def test_get_messages_sorts_by_timestamp(self):
+    async def test_get_messages_sorts_by_timestamp(self, redis_client):
         """Verify messages sorted by timestamp (MUST requirement)"""
         router = MessageRouter()
 
@@ -603,7 +629,7 @@ class TestMessageRouterInterface:
                 assert "timestamp" in messages[i] or hasattr(messages[i], "timestamp")
 
     @pytest.mark.asyncio
-    async def test_get_messages_limits_results(self):
+    async def test_get_messages_limits_results(self, redis_client):
         """Verify limit parameter honored (SHOULD requirement)"""
         router = MessageRouter()
 
@@ -624,7 +650,7 @@ class TestMessageRouterInterface:
 class TestConsensusDetectorInterface:
     """Test ConsensusDetector interface compliance per orchestrator_interface.yaml"""
 
-    def test_detector_has_detect_consensus_method(self):
+    def test_detector_has_detect_consensus_method(self, redis_client):
         """Verify detect_consensus method exists"""
         detector = ConsensusDetector()
 
@@ -632,7 +658,7 @@ class TestConsensusDetectorInterface:
         assert hasattr(detector, "detect_consensus")
         assert callable(detector.detect_consensus)
 
-    def test_detector_has_extract_positions_method(self):
+    def test_detector_has_extract_positions_method(self, redis_client):
         """Verify extract_positions method exists"""
         detector = ConsensusDetector()
 
@@ -749,7 +775,7 @@ class TestConsensusDetectorInterface:
         assert "agent_sam" in result.get("dissenting_agents", [])
 
     @pytest.mark.asyncio
-    async def test_detect_timeout_after_max_rounds(self):
+    async def test_detect_timeout_after_max_rounds(self, redis_client):
         """Verify timeout after 5 rounds (MUST requirement)"""
         detector = ConsensusDetector()
 
@@ -784,7 +810,7 @@ class TestConsensusDetectorInterface:
         assert result.get("rounds_elapsed", 0) >= 5
 
     @pytest.mark.asyncio
-    async def test_detect_timeout_after_time_limit(self):
+    async def test_detect_timeout_after_time_limit(self, redis_client):
         """Verify timeout after 120 seconds (MUST requirement)"""
         detector = ConsensusDetector()
 
@@ -858,7 +884,7 @@ class TestConsensusDetectorInterface:
         assert "agent_alex" in result
 
     @pytest.mark.asyncio
-    async def test_consensus_lenient_agree_detection(self):
+    async def test_consensus_lenient_agree_detection(self, redis_client):
         """Verify SHOULD be lenient with AGREE detection"""
         detector = ConsensusDetector()
 
@@ -910,102 +936,102 @@ class TestOrchestratorErrorHandling:
     """Test error conditions specified in contract"""
 
     @pytest.mark.asyncio
-    async def test_execute_raises_invalid_command(self):
+    async def test_execute_raises_invalid_command(self, redis_client):
         """Verify InvalidCommand raised when DM input doesn't parse"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import InvalidCommand
+        from src.orchestration.exceptions import InvalidCommand
 
         # Verify exception type exists
         assert InvalidCommand is not None
 
     @pytest.mark.asyncio
-    async def test_execute_raises_phase_transition_failed(self):
+    async def test_execute_raises_phase_transition_failed(self, redis_client):
         """Verify PhaseTransitionFailed when state machine cannot proceed"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import PhaseTransitionFailed
+        from src.orchestration.exceptions import PhaseTransitionFailed
 
         assert PhaseTransitionFailed is not None
 
     @pytest.mark.asyncio
-    async def test_execute_raises_agent_execution_failed(self):
+    async def test_execute_raises_agent_execution_failed(self, redis_client):
         """Verify AgentExecutionFailed when agent RQ job times out"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import AgentExecutionFailed
+        from src.orchestration.exceptions import AgentExecutionFailed
 
         assert AgentExecutionFailed is not None
 
     @pytest.mark.asyncio
-    async def test_execute_raises_max_retries_exceeded(self):
+    async def test_execute_raises_max_retries_exceeded(self, redis_client):
         """Verify MaxRetriesExceeded when validation fails 3 times for all agents"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import MaxRetriesExceeded
+        from src.orchestration.exceptions import MaxRetriesExceeded
 
         assert MaxRetriesExceeded is not None
 
     @pytest.mark.asyncio
-    async def test_transition_raises_invalid_phase_transition(self):
+    async def test_transition_raises_invalid_phase_transition(self, redis_client):
         """Verify InvalidPhaseTransition when transition not allowed"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import InvalidPhaseTransition
+        from src.orchestration.exceptions import InvalidPhaseTransition
 
         assert InvalidPhaseTransition is not None
 
     @pytest.mark.asyncio
-    async def test_rollback_raises_checkpoint_not_found(self):
+    async def test_rollback_raises_checkpoint_not_found(self, redis_client):
         """Verify CheckpointNotFound when no checkpoint exists for target"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
-        from src.orchestrator.exceptions import CheckpointNotFound
+        from src.orchestration.exceptions import CheckpointNotFound
 
         assert CheckpointNotFound is not None
 
     @pytest.mark.asyncio
-    async def test_route_raises_invalid_channel(self):
+    async def test_route_raises_invalid_channel(self, redis_client):
         """Verify InvalidChannel when channel not recognized"""
         router = MessageRouter()
 
-        from src.orchestrator.exceptions import InvalidChannel
+        from src.orchestration.exceptions import InvalidChannel
 
         assert InvalidChannel is not None
 
     @pytest.mark.asyncio
-    async def test_route_raises_recipient_not_found(self):
+    async def test_route_raises_recipient_not_found(self, redis_client):
         """Verify RecipientNotFound when to_agents contains invalid ID"""
         router = MessageRouter()
 
-        from src.orchestrator.exceptions import RecipientNotFound
+        from src.orchestration.exceptions import RecipientNotFound
 
         assert RecipientNotFound is not None
 
     @pytest.mark.asyncio
-    async def test_get_messages_raises_agent_not_found(self):
+    async def test_get_messages_raises_agent_not_found(self, redis_client):
         """Verify AgentNotFound when agent_id invalid"""
         router = MessageRouter()
 
-        from src.orchestrator.exceptions import AgentNotFound
+        from src.orchestration.exceptions import AgentNotFound
 
         assert AgentNotFound is not None
 
     @pytest.mark.asyncio
-    async def test_consensus_raises_llm_call_failed(self):
+    async def test_consensus_raises_llm_call_failed(self, redis_client):
         """Verify LLMCallFailed when OpenAI API fails"""
         detector = ConsensusDetector()
 
-        from src.orchestrator.exceptions import LLMCallFailed
+        from src.orchestration.exceptions import LLMCallFailed
 
         assert LLMCallFailed is not None
 
     @pytest.mark.asyncio
-    async def test_consensus_raises_invalid_agent_list(self):
+    async def test_consensus_raises_invalid_agent_list(self, redis_client):
         """Verify InvalidAgentList when agents list empty"""
         detector = ConsensusDetector()
 
-        from src.orchestrator.exceptions import InvalidAgentList
+        from src.orchestration.exceptions import InvalidAgentList
 
         assert InvalidAgentList is not None
 
@@ -1020,7 +1046,7 @@ class TestOrchestratorPerformance:
     @pytest.mark.asyncio
     async def test_execute_turn_completes_within_20s(self):
         """Verify execute_turn_cycle completes within 20s (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         start = datetime.now()
         result = await orchestrator.execute_turn_cycle(
@@ -1036,7 +1062,7 @@ class TestOrchestratorPerformance:
     @pytest.mark.asyncio
     async def test_phase_transition_completes_within_100ms(self):
         """Verify phase transitions complete within 100ms (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         start = datetime.now()
         result = await orchestrator.transition_to_phase(phase="memory_query")
@@ -1083,7 +1109,7 @@ class TestOrchestratorPerformance:
     @pytest.mark.asyncio
     async def test_rollback_completes_within_500ms(self):
         """Verify rollback completes within 500ms (MUST)"""
-        orchestrator = TtrpgOrchestrator()
+        orchestrator = TurnOrchestrator(redis_client)
 
         start = datetime.now()
         result = await orchestrator.rollback_to_phase(

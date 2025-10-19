@@ -26,6 +26,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 pythonpath = ["."]
 addopts = ["-v", "--strict-markers"]
+markers = [
+    "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
+]
 
 [tool.ruff]
 line-length = 100
