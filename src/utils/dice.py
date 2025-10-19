@@ -3,10 +3,10 @@
 
 import random
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
+from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 from src.models.messages import DiceRoll
-
 
 # Standard D&D dice types
 VALID_DICE_SIDES = {4, 6, 8, 10, 12, 20, 100}
@@ -140,22 +140,25 @@ def roll_d6() -> int:
     return random.randint(1, 6)
 
 
-def validate_lasers_feelings_roll(
+def _evaluate_single_die(
     character_number: int,
     roll_result: int,
     task_type: str
 ) -> tuple[bool, str]:
     """
-    Validate a Lasers & Feelings roll outcome.
+    Private helper: Evaluate a single d6 against character number.
+
+    NOTE: This is a low-level helper for evaluating individual dice.
+    For full Lasers & Feelings rolls, use roll_lasers_feelings() instead.
 
     Rules:
     - Lasers task: Roll UNDER character number to succeed
     - Feelings task: Roll OVER character number to succeed
-    - Roll EXACTLY number: Success with complication
+    - Roll EXACTLY number: Success with complication (LASER FEELINGS)
 
     Args:
         character_number: Character's Lasers/Feelings number (2-5)
-        roll_result: 1d6 roll result
+        roll_result: Single d6 result (1-6)
         task_type: "lasers" or "feelings"
 
     Returns:
@@ -194,3 +197,133 @@ def validate_lasers_feelings_roll(
 
     outcome = "success" if success else "failure"
     return success, outcome
+
+
+def roll_lasers_feelings(
+    character_number: int,
+    task_type: str,
+    is_prepared: bool = False,
+    is_expert: bool = False,
+    gm_question: str | None = None
+) -> LasersFeelingRollResult:
+    """
+    Perform a complete Lasers & Feelings roll with multi-die success counting.
+
+    Rules:
+    - Base: 1d6
+    - Prepared: +1d6 (2d6 total)
+    - Expert: +1d6 (3d6 total if also prepared, 2d6 if not prepared)
+    - Each die compared individually to character_number
+    - LASERS task: die < number = success, die == number = LASER FEELINGS
+    - FEELINGS task: die > number = success, die == number = LASER FEELINGS
+    - LASER FEELINGS counts as success + grants special insight
+    - Total successes determine outcome:
+      * 0 successes = failure
+      * 1 success = barely manage (complication)
+      * 2 successes = clean success
+      * 3 successes = critical success
+
+    Args:
+        character_number: Character's Lasers/Feelings number (2-5)
+        task_type: "lasers" or "feelings"
+        is_prepared: Whether character was prepared (+1d6)
+        is_expert: Whether character is expert (+1d6)
+        gm_question: Optional question to ask GM if LASER FEELINGS occurs
+
+    Returns:
+        LasersFeelingRollResult with complete roll details
+
+    Raises:
+        ValueError: If parameters are invalid
+
+    Examples:
+        >>> # Base roll for number 3 character attempting lasers task
+        >>> result = roll_lasers_feelings(3, "lasers")
+        >>> result.dice_count
+        1
+        >>> # Prepared and expert roll
+        >>> result = roll_lasers_feelings(4, "feelings", is_prepared=True, is_expert=True)
+        >>> result.dice_count
+        3
+    """
+    # Validate inputs
+    if not 2 <= character_number <= 5:
+        raise ValueError(
+            f"Character number must be 2-5, got {character_number}"
+        )
+
+    task_type = task_type.lower()
+    if task_type not in ("lasers", "feelings"):
+        raise ValueError(
+            f"Task type must be 'lasers' or 'feelings', got '{task_type}'"
+        )
+
+    # Determine number of dice
+    dice_count = 1  # Base
+    if is_prepared:
+        dice_count += 1
+    if is_expert:
+        dice_count += 1
+
+    # Roll all dice
+    individual_rolls = [roll_d6() for _ in range(dice_count)]
+
+    # Evaluate each die
+    die_successes: list[bool] = []
+    laser_feelings_indices: list[int] = []
+
+    for idx, roll in enumerate(individual_rolls):
+        # Check for exact match (LASER FEELINGS)
+        if roll == character_number:
+            laser_feelings_indices.append(idx)
+            die_successes.append(True)  # LASER FEELINGS counts as success
+        # Check for success based on task type
+        elif task_type == "lasers":
+            # Lasers task: roll under number
+            die_successes.append(roll < character_number)
+        else:  # feelings
+            # Feelings task: roll over number
+            die_successes.append(roll > character_number)
+
+    # Count total successes
+    total_successes = sum(die_successes)
+
+    # Determine outcome
+    if total_successes == 0:
+        outcome = RollOutcome.FAILURE
+    elif total_successes == 1:
+        outcome = RollOutcome.BARELY
+    elif total_successes == 2:
+        outcome = RollOutcome.SUCCESS
+    else:  # 3 successes
+        outcome = RollOutcome.CRITICAL
+
+    # Create result
+    return LasersFeelingRollResult(
+        character_number=character_number,
+        task_type=task_type,
+        is_prepared=is_prepared,
+        is_expert=is_expert,
+        individual_rolls=individual_rolls,
+        die_successes=die_successes,
+        laser_feelings_indices=laser_feelings_indices,
+        total_successes=total_successes,
+        outcome=outcome,
+        gm_question=gm_question,
+        timestamp=datetime.now(UTC)
+    )
+
+
+# Backward compatibility alias (deprecated - use roll_lasers_feelings instead)
+def validate_lasers_feelings_roll(
+    character_number: int,
+    roll_result: int,
+    task_type: str
+) -> tuple[bool, str]:
+    """
+    DEPRECATED: Use roll_lasers_feelings() for complete rolls.
+
+    This function evaluates a single die, but Lasers & Feelings uses
+    multiple dice with success counting. Kept for backward compatibility.
+    """
+    return _evaluate_single_die(character_number, roll_result, task_type)
