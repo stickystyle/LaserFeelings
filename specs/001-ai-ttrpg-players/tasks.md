@@ -222,19 +222,19 @@ Steps:
 
 ### DM Interface Implementation for User Story 1
 
-- [ ] T063 [US1] Implement DM command parser in src/interface/dm_cli.py
+- [X] T063 [US1] Implement DM command parser in src/interface/dm_cli.py
   - **Reference**: data-model.md §5.1 (DMCommand model), quickstart.md (command examples)
-- [ ] T064 [US1] Add "narrate" command handler to DM CLI
+- [X] T064 [US1] Add "narrate" command handler to DM CLI
   - **Reference**: quickstart.md (narrate command), data-model.md §5.1 (DMCommandType.NARRATE)
-- [ ] T065 [US1] Add "roll" command handler with dice notation parsing
+- [X] T065 [US1] Add "roll" command handler with dice notation parsing
   - **Reference**: data-model.md §5.2 (DiceRoll), src/utils/dice.py (D&D 5e notation)
-- [ ] T066 [US1] Add "success" and "fail" command handlers
+- [X] T066 [US1] Add "success" and "fail" command handlers
   - **Reference**: data-model.md §5.1 (DMCommandType.SUCCESS/FAILURE), research.md §1 (phase transitions)
-- [ ] T067 [US1] Add turn output formatter displaying agent responses
+- [X] T067 [US1] Add turn output formatter displaying agent responses
   - **Reference**: data-model.md §3.1 (GameState fields), contracts/agent_interface.yaml (Message schema)
-- [ ] T068 [US1] Add session state display showing current phase and turn number
+- [X] T068 [US1] Add session state display showing current phase and turn number
   - **Reference**: data-model.md §3.1 (session_number, turn_number, current_phase)
-- [ ] T069 [US1] Add error handling and user-friendly error messages
+- [X] T069 [US1] Add error handling and user-friendly error messages
   - **Reference**: contracts/*_interface.yaml (errors sections)
 
 ### Unit Tests for User Story 1
