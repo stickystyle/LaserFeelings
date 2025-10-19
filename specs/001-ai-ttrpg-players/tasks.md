@@ -134,31 +134,31 @@ Steps:
 
 ### Contract Tests for User Story 1 (TDD - Write FIRST, Ensure FAIL)
 
-- [ ] T028 [P] [US1] Contract test for BasePersonaAgent interface in tests/contract/test_agent_contracts.py
+- [X] T028 [P] [US1] Contract test for BasePersonaAgent interface in tests/contract/test_agent_contracts.py
   - **Reference**: contracts/agent_interface.yaml (contract_tests section for BasePersonaAgent)
-- [ ] T029 [P] [US1] Contract test for CharacterAgent interface in tests/contract/test_agent_contracts.py
+- [X] T029 [P] [US1] Contract test for CharacterAgent interface in tests/contract/test_agent_contracts.py
   - **Reference**: contracts/agent_interface.yaml (contract_tests section for CharacterAgent)
-- [ ] T030 [P] [US1] Contract test for CorruptedTemporalMemory interface in tests/contract/test_memory_contracts.py
+- [X] T030 [P] [US1] Contract test for CorruptedTemporalMemory interface in tests/contract/test_memory_contracts.py
   - **Reference**: contracts/memory_interface.yaml
-- [ ] T031 [P] [US1] Contract test for TtrpgOrchestrator interface in tests/contract/test_orchestrator_contracts.py
+- [X] T031 [P] [US1] Contract test for TtrpgOrchestrator interface in tests/contract/test_orchestrator_contracts.py
   - **Reference**: contracts/orchestrator_interface.yaml
 
 ### Integration Tests for User Story 1 (TDD - Write FIRST, Ensure FAIL)
 
-- [ ] T032 [US1] Integration test for complete turn cycle in tests/integration/test_turn_cycle.py
+- [X] T032 [US1] Integration test for complete turn cycle in tests/integration/test_turn_cycle.py
   - **Reference**: spec.md (US1 acceptance criteria), data-model.md §3.1 (GamePhase transitions)
-- [ ] T033 [US1] Integration test for memory persistence across sessions in tests/integration/test_memory_persistence.py
+- [X] T033 [US1] Integration test for memory persistence across sessions in tests/integration/test_memory_persistence.py
   - **Reference**: spec.md (US3 acceptance criteria), research.md §2 (Graphiti episodes)
 
 ### Memory Layer Implementation for User Story 1
 
-- [ ] T034 [P] [US1] Implement Graphiti client wrapper in src/memory/graphiti_client.py
+- [X] T034 [P] [US1] Implement Graphiti client wrapper in src/memory/graphiti_client.py
   - **Reference**: research.md §2 (Graphiti Memory Integration - complete code examples), contracts/memory_interface.yaml
-- [ ] T035 [US1] Implement CorruptedTemporalMemory base class (no corruption yet) in src/memory/corrupted_temporal.py
+- [X] T035 [US1] Implement CorruptedTemporalMemory base class (no corruption yet) in src/memory/corrupted_temporal.py
   - **Reference**: research.md §2 (Graphiti wrapper pattern), data-model.md §2.1 (MemoryEdge)
-- [ ] T036 [US1] Add search() method with temporal queries to CorruptedTemporalMemory
+- [X] T036 [US1] Add search() method with temporal queries to CorruptedTemporalMemory
   - **Reference**: research.md §2 (query_memories_at_time function), §5 (optimized query patterns)
-- [ ] T037 [US1] Add add_episode() method for episode storage to CorruptedTemporalMemory
+- [X] T037 [US1] Add add_episode() method for episode storage to CorruptedTemporalMemory
   - **Reference**: research.md §2 (create_session_episode function), contracts/memory_interface.yaml
 
 ### Agent Layer Implementation for User Story 1

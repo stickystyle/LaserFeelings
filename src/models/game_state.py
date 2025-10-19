@@ -3,7 +3,8 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Literal, TypedDict, NotRequired
+from typing import Literal, NotRequired, TypedDict
+
 from pydantic import BaseModel, Field
 
 
@@ -75,11 +76,16 @@ class GameState(TypedDict):
     dice_task_type: NotRequired[Literal["lasers", "feelings"]]
     dice_result: NotRequired[int]
     dice_success: NotRequired[bool]
+    dice_complication: NotRequired[bool]  # True when exact roll (complication)
+
+    # Session tracking
+    session_number: int  # Current game session number
 
     # Error handling
     error_state: NotRequired[str | None]
     retry_count: int
     rollback_phase: NotRequired[str | None]
+    dm_review_required: NotRequired[bool]  # Flag for DM manual review after validation failures
 
 
 class MemoryQueryState(TypedDict):
