@@ -1,0 +1,39 @@
+[project]
+name = "ttrpg-ai"
+version = "0.1.0"
+description = "Multi-agent AI system where AI agents play as realistic tabletop RPG players"
+requires-python = ">=3.11"
+dependencies = [
+    "graphiti-core>=0.22.0",
+    "langgraph>=1.0.0",
+    "loguru>=0.7.3",
+    "neo4j>=6.0.2",
+    "openai>=2.5.0",
+    "pydantic>=2.12.3",
+    "pydantic-settings>=2.11.0",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "redis>=6.4.0",
+    "rq>=2.6.0",
+    "ruff>=0.14.1",
+    "tenacity>=9.1.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-v", "--strict-markers"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

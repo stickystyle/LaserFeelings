@@ -57,12 +57,12 @@ Steps:
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create project structure per plan.md (src/, tests/, docker/, scripts/, .env.example)
-- [ ] T002 Initialize Python project with uv init and pyproject.toml configuration
-- [ ] T003 [P] Add core dependencies via uv: langgraph, graphiti, neo4j, redis, rq, openai, pydantic, pydantic-settings, tenacity, loguru
-- [ ] T004 [P] Create docker/docker-compose.yml with Neo4j 5.x, Redis 7.x, and app containers
-- [ ] T005 [P] Create .env.example with all configuration variables per Settings model
-- [ ] T006 Configure ruff for linting and formatting
+- [X] T001 Create project structure per plan.md (src/, tests/, docker/, scripts/, .env.example)
+- [X] T002 Initialize Python project with uv init and pyproject.toml configuration
+- [X] T003 [P] Add core dependencies via uv: langgraph, graphiti, neo4j, redis, rq, openai, pydantic, pydantic-settings, tenacity, loguru
+- [X] T004 [P] Create docker/docker-compose.yml with Neo4j 5.x, Redis 7.x, and app containers
+- [X] T005 [P] Create .env.example with all configuration variables per Settings model
+- [X] T006 Configure ruff for linting and formatting
 
 ---
 
