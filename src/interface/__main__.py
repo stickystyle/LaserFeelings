@@ -4,16 +4,22 @@
 import json
 import sys
 
+from loguru import logger
 from redis import Redis
 
 from src.config.settings import get_settings
 from src.interface.dm_textual import DMTextualInterface
 from src.orchestration.message_router import MessageRouter
 from src.orchestration.turn_orchestrator import TurnOrchestrator
+from src.utils.redis_cleanup import cleanup_redis_for_new_session
 
 
 def main() -> None:
     """Run Textual DM interface with real configuration"""
+    # Suppress loguru output to stderr (interferes with Textual TUI)
+    # The Textual app captures all user interactions; logger writes break rendering
+    logger.remove()  # Remove default handlers
+
     # Load settings
     settings = get_settings()
 
@@ -25,6 +31,11 @@ def main() -> None:
         print(f"Error: Could not connect to Redis: {e}")
         print("Make sure Redis is running via 'docker-compose up -d'")
         sys.exit(1)
+
+    # Clean up Redis for new session (clear old messages, queues, turn state)
+    cleanup_result = cleanup_redis_for_new_session(redis_client)
+    if not cleanup_result["success"]:
+        print(f"Warning: Redis cleanup incomplete: {cleanup_result.get('error', 'Unknown error')}")
 
     # Create real orchestrator and router
     orchestrator = TurnOrchestrator(redis_client)
@@ -47,9 +58,7 @@ def main() -> None:
     # Load campaign and character info
     app._campaign_name = config.get("campaign_name", "Unknown Campaign")
     app.session_number = 1
-    app._active_agents = [
-        char["player"]["agent_id"] for char in config.get("characters", [])
-    ]
+    app._active_agents = [char["player"]["agent_id"] for char in config.get("characters", [])]
 
     # Build character name mapping (both character_id and agent_id -> name)
     for char in config.get("characters", []):

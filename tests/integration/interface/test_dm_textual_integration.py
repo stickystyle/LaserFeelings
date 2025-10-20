@@ -191,7 +191,7 @@ async def test_roll_response_accept_command_clears_suggestion(
 
         # Create and post a Submitted event manually
         event = Input.Submitted(input_widget, "accept")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Suggestion should be cleared
         assert app._current_roll_suggestion is None
@@ -223,7 +223,7 @@ async def test_roll_response_override_command_clears_suggestion(
 
         # Create and post a Submitted event manually
         event = Input.Submitted(input_widget, "override 1d6")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Suggestion should be cleared
         assert app._current_roll_suggestion is None
@@ -255,7 +255,7 @@ async def test_roll_response_success_command_clears_suggestion(
 
         # Create and post a Submitted event manually
         event = Input.Submitted(input_widget, "success")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Suggestion should be cleared
         assert app._current_roll_suggestion is None
@@ -287,7 +287,7 @@ async def test_roll_response_fail_command_clears_suggestion(
 
         # Create and post a Submitted event manually
         event = Input.Submitted(input_widget, "fail")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Suggestion should be cleared
         assert app._current_roll_suggestion is None
@@ -309,7 +309,7 @@ async def test_roll_response_without_pending_suggestion_shows_error(
 
         # Create and post a Submitted event manually
         event = Input.Submitted(input_widget, "accept")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Should still be None
         assert app._current_roll_suggestion is None
@@ -342,7 +342,7 @@ async def test_roll_response_accept_calls_orchestrator(mock_orchestrator, mock_r
 
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "accept")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Verify orchestrator was called with correct parameters
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -384,7 +384,7 @@ async def test_roll_response_override_calls_orchestrator(mock_orchestrator, mock
 
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "override 4")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Verify orchestrator was called with dice override
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -427,7 +427,7 @@ async def test_roll_response_success_calls_orchestrator(mock_orchestrator, mock_
 
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "success")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Verify orchestrator was called to force success
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -470,7 +470,7 @@ async def test_roll_response_fail_calls_orchestrator(mock_orchestrator, mock_rou
 
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "fail")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Verify orchestrator was called to force failure
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -514,7 +514,7 @@ async def test_roll_response_accept_handles_orchestrator_error(
         event = Input.Submitted(input_widget, "accept")
 
         # Should not raise exception
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Suggestion should still be cleared even on error
         assert app._current_roll_suggestion is None
@@ -544,10 +544,344 @@ async def test_roll_response_override_handles_invalid_dice_value(
 
         # Try to override with invalid value
         event = Input.Submitted(input_widget, "override 7")
-        app.on_input_submitted(event)
+        await app.on_input_submitted(event)
 
         # Orchestrator should NOT be called
         mock_orchestrator.resume_turn_with_dm_input.assert_not_called()
 
         # Suggestion should still be cleared
         assert app._current_roll_suggestion is None
+
+
+# ============================================================================
+# Phase 4: Clarifying Questions Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_show_clarification_questions_displays_panel(mock_orchestrator, mock_router):
+    """Integration: Clarification questions panel displays correctly."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+
+    questions_data = {
+        "round": 1,
+        "questions": [
+            {
+                "agent_id": "agent_alex_001",
+                "question_text": "Are there any guards visible?",
+            },
+            {
+                "agent_id": "agent_zara_001",
+                "question_text": "What's the range of the plasma cannon?",
+            }
+        ]
+    }
+
+    app._character_names = {
+        "agent_alex_001": "Alex",
+        "agent_zara_001": "Zara-7"
+    }
+
+    async with app.run_test():
+        app.show_clarification_questions(questions_data)
+
+        assert app._clarification_mode is True
+        assert app._pending_questions == questions_data["questions"]
+        assert app._questions_round == 1
+
+
+@pytest.mark.asyncio
+async def test_answer_clarification_question(mock_orchestrator, mock_router):
+    """Integration: Answering a clarification question calls orchestrator."""
+    mock_orchestrator.resume_turn_with_dm_input.return_value = {
+        "phase_completed": "memory_query"
+    }
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+
+    questions = [
+        {
+            "agent_id": "agent_alex_001",
+            "question_text": "Are there guards?",
+        }
+    ]
+
+    app._clarification_mode = True
+    app._pending_questions = questions
+    app._questions_round = 1
+    app._character_names = {"agent_alex_001": "Alex"}
+
+    # Mock _fetch_new_clarification_questions to return no follow-ups
+    app._fetch_new_clarification_questions = Mock(return_value=[])
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+        event = Input.Submitted(input_widget, "1 Yes, two guards at the far end")
+        await app.on_input_submitted(event)
+
+        # Verify orchestrator was called
+        mock_orchestrator.resume_turn_with_dm_input.assert_called_once()
+        call_args = mock_orchestrator.resume_turn_with_dm_input.call_args
+
+        assert call_args[1]["session_number"] == 1
+        assert call_args[1]["dm_input_type"] == "dm_clarification_answer"
+        assert call_args[1]["dm_input_data"]["answers"][0]["agent_id"] == "agent_alex_001"
+        assert "two guards" in call_args[1]["dm_input_data"]["answers"][0]["answer"]
+        assert call_args[1]["dm_input_data"]["force_finish"] is False
+
+
+@pytest.mark.asyncio
+async def test_finish_clarification_early(mock_orchestrator, mock_router):
+    """Integration: Force finishing clarification rounds calls orchestrator."""
+    mock_orchestrator.resume_turn_with_dm_input.return_value = {
+        "phase_completed": "strategic_intent"
+    }
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Any guards?"}]
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+        event = Input.Submitted(input_widget, "finish")
+        await app.on_input_submitted(event)
+
+        assert app._clarification_mode is False
+        mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
+            session_number=1,
+            dm_input_type="dm_clarification_answer",
+            dm_input_data={"answers": [], "force_finish": True}
+        )
+
+
+@pytest.mark.asyncio
+async def test_done_command_exits_clarification_mode(mock_orchestrator, mock_router):
+    """Integration: Done command clears clarification mode."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Any guards?"}]
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+        event = Input.Submitted(input_widget, "done")
+        await app.on_input_submitted(event)
+
+        assert app._clarification_mode is False
+        assert app._pending_questions is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_question_number_shows_error(mock_orchestrator, mock_router):
+    """Integration: Invalid question number shows error message."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Question 1?"}]
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Try to answer question 5 when only 1 exists
+        event = Input.Submitted(input_widget, "5 Some answer")
+        await app.on_input_submitted(event)
+
+        # Orchestrator should not be called
+        mock_orchestrator.resume_turn_with_dm_input.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_invalid_answer_format_shows_error(mock_orchestrator, mock_router):
+    """Integration: Invalid answer format shows error message."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Question 1?"}]
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Invalid format (no space, no answer)
+        event = Input.Submitted(input_widget, "1")
+        await app.on_input_submitted(event)
+
+        # Orchestrator should not be called
+        mock_orchestrator.resume_turn_with_dm_input.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_display_turn_result_shows_clarification_questions(mock_orchestrator, mock_router):
+    """Integration: Turn result pause for clarification displays questions."""
+    from unittest.mock import Mock
+
+    # Mock message for clarification question
+    mock_message = Mock()
+    mock_message.timestamp = datetime.now()
+    mock_message.from_agent = "agent_alex_001"
+    mock_message.content = "Are there any guards?"
+    mock_message.phase = "dm_clarification"
+    mock_message.turn_number = 1
+
+    mock_router.get_ooc_messages_for_player.return_value = [mock_message]
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._character_names = {"agent_alex_001": "Alex"}
+    app.turn_number = 1
+
+    turn_result = {
+        "awaiting_dm_input": True,
+        "awaiting_phase": "dm_clarification_wait",
+        "phase_completed": "dm_clarification",
+    }
+
+    async with app.run_test():
+        app.display_turn_result(turn_result)
+
+        # Should enter clarification mode
+        assert app._clarification_mode is True
+        assert app._pending_questions is not None
+        assert len(app._pending_questions) == 1
+        assert app._pending_questions[0]["agent_id"] == "agent_alex_001"
+
+
+@pytest.mark.asyncio
+async def test_show_clarification_questions_with_no_questions(mock_orchestrator, mock_router):
+    """Integration: Empty questions list shows appropriate message."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+
+    questions_data = {
+        "round": 1,
+        "questions": []
+    }
+
+    async with app.run_test():
+        app.show_clarification_questions(questions_data)
+
+        # Should not enter clarification mode
+        assert app._clarification_mode is False
+
+
+@pytest.mark.asyncio
+async def test_empty_answer_rejected_with_validation_error(mock_orchestrator, mock_router):
+    """Integration: Empty answer text is rejected with validation error."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [
+        {"agent_id": "agent_1", "question_text": "Any guards?"}
+    ]
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Submit answer with empty text (just whitespace after number)
+        event = Input.Submitted(input_widget, "1 ")
+        await app.on_input_submitted(event)
+
+        # Orchestrator should not be called
+        mock_orchestrator.resume_turn_with_dm_input.assert_not_called()
+
+        # Should stay in clarification mode
+        assert app._clarification_mode is True
+
+
+@pytest.mark.asyncio
+async def test_done_in_answer_shows_hint(mock_orchestrator, mock_router):
+    """Integration: Typing '1 done' shows hint about using 'done' alone."""
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [
+        {"agent_id": "agent_1", "question_text": "Any guards?"}
+    ]
+    app._character_names = {"agent_1": "Alex"}
+
+    # Mock _fetch_new_clarification_questions to return no follow-ups
+    app._fetch_new_clarification_questions = Mock(return_value=[])
+
+    mock_orchestrator.resume_turn_with_dm_input.return_value = {
+        "phase_completed": "memory_query"
+    }
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Submit answer containing "done"
+        event = Input.Submitted(input_widget, "1 done with this")
+        await app.on_input_submitted(event)
+
+        # Should still process the answer (with hint displayed)
+        mock_orchestrator.resume_turn_with_dm_input.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_answer_recording_error_keeps_mode_active(mock_orchestrator, mock_router):
+    """Integration: Error during answer recording keeps clarification mode active."""
+    mock_orchestrator.resume_turn_with_dm_input.side_effect = Exception(
+        "Connection error"
+    )
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [
+        {"agent_id": "agent_1", "question_text": "Any guards?"}
+    ]
+    app._character_names = {"agent_1": "Alex"}
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Submit valid answer, but orchestrator fails
+        event = Input.Submitted(input_widget, "1 Yes, there are guards")
+        await app.on_input_submitted(event)
+
+        # Should stay in clarification mode (not clear it)
+        assert app._clarification_mode is True
+
+        # Should still have pending questions
+        assert app._pending_questions is not None
+
+
+@pytest.mark.asyncio
+async def test_connection_error_during_follow_up_poll_exits_mode(
+    mock_orchestrator, mock_router
+):
+    """Integration: Connection error during follow-up polling exits clarification mode."""
+    mock_orchestrator.resume_turn_with_dm_input.return_value = {
+        "phase_completed": "dm_clarification"
+    }
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [
+        {"agent_id": "agent_1", "question_text": "Any guards?"}
+    ]
+    app._character_names = {"agent_1": "Alex"}
+
+    # Mock _fetch_new_clarification_questions to raise connection error
+    app._fetch_new_clarification_questions = Mock(
+        side_effect=ConnectionError("Redis connection lost")
+    )
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+
+        # Submit valid answer
+        event = Input.Submitted(input_widget, "1 Yes, there are guards")
+        await app.on_input_submitted(event)
+
+        # Connection error should exit clarification mode
+        assert app._clarification_mode is False

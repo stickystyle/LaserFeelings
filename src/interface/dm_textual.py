@@ -1,6 +1,8 @@
 # ABOUTME: Textual TUI interface for DM interaction with AI TTRPG players.
 # ABOUTME: Provides dual-panel layout with game log and OOC strategic discussion.
 
+import asyncio
+
 from loguru import logger
 from textual.app import App, ComposeResult
 from textual.containers import Container, Vertical
@@ -216,8 +218,8 @@ class DMTextualInterface(App):
         self.write_game_log(f"  Phase: {phase_name}")
         self.write_game_log(f"  Active Agents: {len(self._active_agents)}")
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle DM command input - includes roll responses"""
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle DM command input - includes roll responses and clarification answers"""
         if event.input.id != "dm-input":
             return
 
@@ -226,6 +228,157 @@ class DMTextualInterface(App):
 
         if not user_input.strip():
             return
+
+        # Check if we're in clarification mode first (highest priority)
+        if self._clarification_mode and self._pending_questions:
+            # Handle "done" command to finish answering questions
+            if user_input.lower() == "done":
+                self.write_game_log("[green]✓ Done answering questions[/green]")
+                self._clarification_mode = False
+                self._pending_questions = None
+                return
+
+            # Handle "finish" to force end of clarification rounds
+            if user_input.lower() == "finish":
+                self.write_game_log("[yellow]⊣ Finishing clarification (no more rounds)[/yellow]")
+                self._clarification_mode = False
+                self._pending_questions = None
+
+                # Call orchestrator to skip remaining clarification
+                try:
+                    result = self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="dm_clarification_answer",
+                        dm_input_data={"answers": [], "force_finish": True},
+                    )
+                    if result and "phase_completed" in result:
+                        self.current_phase = GamePhase(result["phase_completed"])
+                except Exception as e:
+                    self.write_game_log(f"[red]✗ Error:[/red] {e}")
+                    logger.error(f"Force finish clarification failed: {e}")
+                return
+
+            # Check for "done" embedded in answer (e.g., "1 done")
+            if " done" in user_input.lower():
+                self.write_game_log(
+                    "[yellow]Hint: Type just 'done' on its own line to exit[/yellow]"
+                )
+
+            # Parse answer: "<number> <answer>"
+            parts = user_input.split(" ", 1)
+            if len(parts) < 2:
+                self.write_game_log(
+                    "[red]✗ Invalid format.[/red] Use: [green]<number> <answer>[/green]"
+                )
+                return
+
+            try:
+                q_idx = int(parts[0]) - 1
+                answer_text = parts[1].strip()
+
+                # Validate answer text is not empty
+                if not answer_text:
+                    self.write_game_log(
+                        "[red]✗ Answer cannot be empty.[/red] [green]Use: <number> <answer>[/green]"
+                    )
+                    return
+
+                if q_idx < 0 or q_idx >= len(self._pending_questions):
+                    self.write_game_log(
+                        f"[red]✗ Invalid question number.[/red] "
+                        f"Valid range: 1-{len(self._pending_questions)}"
+                    )
+                    return
+
+                question = self._pending_questions[q_idx]
+                agent_id = question.get("agent_id", "unknown")
+                char_name = self._character_names.get(agent_id, "Unknown")
+
+                # Display confirmation
+                self.write_game_log(
+                    f"[green]✓ Answer recorded:[/green] {char_name} - {answer_text}"
+                )
+
+                # Call orchestrator to record answer (single answer at a time)
+                try:
+                    result = self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="dm_clarification_answer",
+                        dm_input_data={
+                            "answers": [{"agent_id": agent_id, "answer": answer_text}],
+                            "force_finish": False,
+                        },
+                    )
+
+                    # Check for follow-up questions after orchestrator processes answer
+                    # The graph will loop back to collect node and may generate new questions
+                    self.write_game_log("[dim]Checking for follow-up questions...[/dim]")
+
+                    # Poll with timeout for orchestrator to generate follow-up questions
+                    max_wait_time = 5.0  # seconds
+                    poll_interval = 0.5
+                    elapsed = 0.0
+                    new_questions = None
+
+                    try:
+                        while elapsed < max_wait_time:
+                            new_questions = self._fetch_new_clarification_questions()
+                            if new_questions:
+                                count = len(new_questions)
+                                self.write_game_log(
+                                    f"[yellow]↻ Found {count} follow-up question(s)[/yellow]"
+                                )
+                                break
+
+                            await asyncio.sleep(poll_interval)
+                            elapsed += poll_interval
+
+                        if not new_questions:
+                            new_questions = []
+
+                        if new_questions:
+                            # Display new round of questions
+                            self.show_clarification_questions(
+                                {
+                                    "round": self._questions_round + 1,
+                                    "questions": new_questions,
+                                }
+                            )
+                        else:
+                            self.write_game_log(
+                                "[yellow]⤳ No follow-up questions. Clarification complete.[/yellow]"
+                            )
+                            self._clarification_mode = False
+                            self._pending_questions = None
+
+                        if result and "phase_completed" in result:
+                            self.current_phase = GamePhase(result["phase_completed"])
+
+                    except (ConnectionError, TimeoutError):
+                        self.write_game_log(
+                            "[red]✗ Cannot continue - connection issue with orchestrator[/red]"
+                        )
+                        self._clarification_mode = False
+                        return
+
+                except Exception as e:
+                    self.write_game_log(f"[red]✗ Failed to record answer:[/red] {e}")
+                    self.write_game_log(
+                        "[yellow]Type 'done' or 'finish' to exit clarification mode[/yellow]"
+                    )
+                    logger.error(f"Answer recording failed: {e}")
+                    # Keep mode active so user can retry or exit manually
+                    # Don't recurse - let user make next decision
+                    return
+
+                return
+
+            except ValueError:
+                self.write_game_log(
+                    "[red]✗ First part must be a number.[/red] "
+                    "Use: [green]<number> <answer>[/green]"
+                )
+                return
 
         # Check for roll response commands first (before parsing)
         if user_input.lower() in ["accept", "success", "fail"]:
@@ -245,7 +398,7 @@ class DMTextualInterface(App):
                         dm_input_data={
                             "needs_dice": True,
                             # No dice_override - use natural roll
-                        }
+                        },
                     )
 
                     self.write_game_log(
@@ -269,7 +422,7 @@ class DMTextualInterface(App):
                         dm_input_data={
                             "needs_dice": False,
                             "manual_success": True,
-                        }
+                        },
                     )
 
                     self.write_game_log(
@@ -293,7 +446,7 @@ class DMTextualInterface(App):
                         dm_input_data={
                             "needs_dice": False,
                             "manual_success": False,
-                        }
+                        },
                     )
 
                     self.write_game_log(
@@ -316,7 +469,7 @@ class DMTextualInterface(App):
                 self.write_game_log("[red]✗ No pending roll suggestion[/red]")
                 return
 
-            override_dice = user_input[len(self.OVERRIDE_PREFIX):].strip()
+            override_dice = user_input[len(self.OVERRIDE_PREFIX) :].strip()
             suggestion = self._current_roll_suggestion
             self._current_roll_suggestion = None
 
@@ -341,7 +494,7 @@ class DMTextualInterface(App):
                         dm_input_data={
                             "needs_dice": True,
                             "dice_override": dice_value,
-                        }
+                        },
                     )
 
                     self.write_game_log(
@@ -398,7 +551,7 @@ class DMTextualInterface(App):
             self.exit()
 
     async def execute_turn_worker(self, dm_input: str) -> None:
-        """Background worker for turn execution - runs in separate thread"""
+        """Background worker for turn execution - runs in async context"""
         # Show progress
         self.write_game_log("[dim]▼ AI players are thinking...[/dim]")
 
@@ -411,16 +564,42 @@ class DMTextualInterface(App):
                 session_number=self.session_number,
             )
 
-            # Update UI from worker thread safely using call_from_thread
-            self.call_from_thread(self.display_turn_result, turn_result)
+            # Update UI directly (we're already in async context with Textual)
+            self.display_turn_result(turn_result)
 
         except Exception as e:
-            self.call_from_thread(
-                self.write_game_log, f"[red]✗ Turn execution failed:[/red] {e}"
-            )
+            self.write_game_log(f"[red]✗ Turn execution failed:[/red] {e}")
 
     def display_turn_result(self, turn_result: dict) -> None:
-        """Display results from completed turn"""
+        """Display results from completed turn or handle pause for DM input"""
+        # Check if graph is paused awaiting DM input
+        if turn_result.get("awaiting_dm_input"):
+            awaiting_phase = turn_result.get("awaiting_phase")
+
+            # Update phase
+            if turn_result.get("phase_completed"):
+                phase_str = turn_result["phase_completed"]
+                self.current_phase = GamePhase(phase_str)
+            self.update_turn_status()
+
+            # Handle different pause types
+            if awaiting_phase == "dm_clarification_wait":
+                # Fetch and display clarification questions
+                self.write_game_log("\n")
+                new_questions = self._fetch_new_clarification_questions()
+                if new_questions:
+                    self.show_clarification_questions(
+                        {
+                            "round": 1,  # First round when initially pausing
+                            "questions": new_questions,
+                        }
+                    )
+                else:
+                    self.write_game_log("[dim]Clarification phase but no questions found[/dim]")
+
+            # Keep turn in progress flag set (turn not complete)
+            return
+
         # Display character actions
         if turn_result.get("character_actions"):
             self.write_game_log("[bold]Character Actions:[/bold]")
@@ -459,9 +638,7 @@ class DMTextualInterface(App):
             for msg in messages:
                 timestamp = msg.timestamp.strftime("%H:%M:%S")
                 agent_name = self._character_names.get(msg.from_agent, msg.from_agent)
-                ooc_log.write(
-                    f"[dim]{timestamp}[/dim] [bold]{agent_name}:[/bold] {msg.content}"
-                )
+                ooc_log.write(f"[dim]{timestamp}[/dim] [bold]{agent_name}:[/bold] {msg.content}")
 
         except Exception as e:
             # Silently fail for background polling (don't spam error logs)
@@ -470,6 +647,74 @@ class DMTextualInterface(App):
     def is_clarification_phase(self) -> bool:
         """Check if we're in a clarification question phase"""
         return self.current_phase == GamePhase.DM_CLARIFICATION
+
+    def _fetch_new_clarification_questions(self) -> list[dict]:
+        """
+        Fetch new clarification questions from OOC channel.
+
+        Returns:
+            List of question dicts with agent_id and question_text
+        """
+        try:
+            # Get recent OOC messages
+            ooc_messages = self.router.get_ooc_messages_for_player(limit=100)
+
+            # Filter to clarification phase messages from current turn
+            clarification_messages = [
+                msg
+                for msg in ooc_messages
+                if (
+                    msg.phase == GamePhase.DM_CLARIFICATION.value
+                    and msg.turn_number == self.turn_number
+                )
+            ]
+
+            if not clarification_messages:
+                return []
+
+            # Separate questions from answers
+            # Questions are from agents (not "dm")
+            # Answers are from "dm"
+            questions = [msg for msg in clarification_messages if msg.from_agent != "dm"]
+            dm_answers = [msg for msg in clarification_messages if msg.from_agent == "dm"]
+
+            # Find questions that haven't been answered yet
+            # Compare timestamps: questions after the last DM answer are new
+            from datetime import datetime as dt
+
+            last_answer_time = dt.min
+            if dm_answers:
+                last_answer_time = max(msg.timestamp for msg in dm_answers)
+
+            new_questions = [msg for msg in questions if msg.timestamp > last_answer_time]
+
+            # Convert to expected format
+            return [
+                {
+                    "agent_id": msg.from_agent,
+                    "question_text": msg.content,
+                }
+                for msg in new_questions
+            ]
+
+        except (ConnectionError, TimeoutError) as e:
+            # These are real connection issues - should fail visibly
+            logger.error(f"Connection error fetching questions: {e}")
+            self.write_game_log(
+                "[red]✗ Connection issue while checking for follow-up questions[/red]"
+            )
+            raise  # Let caller handle the connection failure
+        except KeyError as e:
+            # Missing key in OOC message - expected edge case, not an error
+            logger.debug(f"Expected key missing in OOC message: {e}")
+            return []
+        except Exception as e:
+            # Unexpected errors - log and fail visibly
+            logger.error(f"Unexpected error fetching clarification questions: {e}")
+            self.write_game_log(
+                "[yellow]⚠ Warning: Unable to check for follow-up questions[/yellow]"
+            )
+            return []  # Gracefully degrade to "no questions" with visible warning
 
     def show_clarification_questions(self, questions_data: dict) -> None:
         """
@@ -504,16 +749,14 @@ class DMTextualInterface(App):
             agent_id = q.get("agent_id", "unknown")
             char_name = self._character_names.get(agent_id, "Unknown")
             question_text = q.get("question_text", "")
-            self.write_game_log(
-                f"  [{idx}] [yellow]{char_name}:[/yellow] {question_text}"
-            )
+            self.write_game_log(f"  [{idx}] [yellow]{char_name}:[/yellow] {question_text}")
 
         # Instructions
         self.write_game_log(
-            f"\n[dim]Answer questions one at a time using:[/dim]\n"
-            f"  [green]<number> <answer>[/green] (e.g., '1 Yes, there are guards')\n"
-            f"  [yellow]done[/yellow] (when finished answering)\n"
-            f"  [yellow]finish[/yellow] (skip remaining rounds)"
+            "\n[dim]Answer questions one at a time using:[/dim]\n"
+            "  [green]<number> <answer>[/green] (e.g., '1 Yes, there are guards')\n"
+            "  [yellow]done[/yellow] (when finished answering)\n"
+            "  [yellow]finish[/yellow] (skip remaining rounds)"
         )
 
         self._clarification_mode = True
