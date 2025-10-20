@@ -4,18 +4,18 @@
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, call
-import pytest
+from unittest.mock import patch
 
+import pytest
 from loguru import logger
 
 from src.utils.logging import (
-    setup_logging,
+    DEFAULT_FORMAT,
     get_logger,
-    log_turn_event,
-    log_phase_transition,
     log_memory_operation,
-    DEFAULT_FORMAT
+    log_phase_transition,
+    log_turn_event,
+    setup_logging,
 )
 
 

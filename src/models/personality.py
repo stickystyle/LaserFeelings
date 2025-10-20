@@ -3,6 +3,7 @@
 
 from enum import Enum
 from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -84,13 +85,13 @@ class PlayerPersonality(BaseModel):
     def decision_style(self) -> str:
         """Strategic preference based on personality"""
         if self.analytical_score > 0.7:
-            return "analytical_planner"
+            return PlayStyle.ANALYTICAL_PLANNER.value
         elif self.risk_tolerance > 0.7:
-            return "bold_improviser"
+            return PlayStyle.BOLD_IMPROVISER.value
         elif self.cooperativeness > 0.7:
-            return "team_coordinator"
+            return PlayStyle.TEAM_COORDINATOR.value
         else:
-            return "balanced_strategist"
+            return PlayStyle.BALANCED_STRATEGIST.value
 
     model_config = {"frozen": True}  # Immutable after creation
 

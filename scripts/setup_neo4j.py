@@ -26,9 +26,9 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from neo4j import GraphDatabase, Driver, Session
-from neo4j.exceptions import ServiceUnavailable, AuthError
 from dotenv import load_dotenv
+from neo4j import Driver, GraphDatabase, Session
+from neo4j.exceptions import AuthError, ServiceUnavailable
 
 
 def load_configuration() -> tuple[str, str, str]:
@@ -227,9 +227,9 @@ def verify_connection(driver: Driver) -> bool:
             result = session.run("CALL dbms.components() YIELD name, versions, edition")
             record = result.single()
             if record is None:
-                print(f"\n✗ Connection failed: No response from database")
+                print("\n✗ Connection failed: No response from database")
                 return False
-            print(f"\n✓ Connected to Neo4j")
+            print("\n✓ Connected to Neo4j")
             print(f"  Version: {record['versions'][0]}")
             print(f"  Edition: {record['edition']}")
             return True

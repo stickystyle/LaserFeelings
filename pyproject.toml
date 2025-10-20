@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ttrpg-ai"
 version = "0.1.0"
@@ -19,6 +23,13 @@ dependencies = [
     "tenacity>=9.1.2",
 ]
 
+[project.scripts]
+ttrpg-dm = "src.interface.dm_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -28,6 +39,7 @@ pythonpath = ["."]
 addopts = ["-v", "--strict-markers"]
 markers = [
     "performance: marks tests as performance tests (deselect with '-m \"not performance\"')",
+    "integration: marks tests as integration tests requiring infrastructure (deselect with '-m \"not integration\"')",
 ]
 
 [tool.ruff]

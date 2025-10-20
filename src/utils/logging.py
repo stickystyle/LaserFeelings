@@ -7,7 +7,6 @@ from typing import Any
 
 from loguru import logger
 
-
 # Default log format with structured context
 DEFAULT_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "

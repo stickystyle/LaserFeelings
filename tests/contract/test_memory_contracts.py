@@ -2,18 +2,17 @@
 # ABOUTME: Tests verify interface compliance with memory_interface.yaml contract specifications.
 
 import os
-import pytest
 from datetime import datetime, timedelta
-from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
 
 # This import will fail until implementation exists (TDD phase)
 from src.memory.corrupted_temporal import CorruptedTemporalMemory
 from src.memory.graphiti_client import GraphitiClient
-
-from src.models.memory_edge import MemoryEdge, MemoryType, CorruptionType
+from src.models.memory_edge import CorruptionType, MemoryEdge, MemoryType
 from src.models.personality import PlayerPersonality
-
 
 # --- Test Fixtures ---
 
@@ -562,7 +561,6 @@ class TestMemoryErrorHandling:
     @pytest.mark.asyncio
     async def test_search_raises_invalid_agent_id(self, neo4j_test_config):
         """Verify InvalidAgentID when agent not found"""
-        from src.memory.exceptions import InvalidAgentID
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
@@ -572,7 +570,6 @@ class TestMemoryErrorHandling:
     @pytest.mark.asyncio
     async def test_add_episode_raises_episode_creation_failed(self, neo4j_test_config):
         """Verify EpisodeCreationFailed when Graphiti fails"""
-        from src.memory.exceptions import EpisodeCreationFailed
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
@@ -582,7 +579,6 @@ class TestMemoryErrorHandling:
     @pytest.mark.asyncio
     async def test_invalidate_raises_memory_not_found(self, neo4j_test_config):
         """Verify MemoryNotFound when UUID doesn't exist"""
-        from src.memory.exceptions import MemoryNotFound
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
@@ -592,7 +588,6 @@ class TestMemoryErrorHandling:
     @pytest.mark.asyncio
     async def test_invalidate_raises_already_invalidated(self, neo4j_test_config):
         """Verify AlreadyInvalidated when memory already has invalid_at"""
-        from src.memory.exceptions import AlreadyInvalidated
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!

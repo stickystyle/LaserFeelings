@@ -317,7 +317,7 @@ def save_personality_files(output_dir: Path) -> None:
     with open(campaign_filepath, 'w') as f:
         json.dump(campaign_config, f, indent=2)
 
-    print(f"✓ Created campaign_config.json (full campaign)")
+    print("✓ Created campaign_config.json (full campaign)")
 
 
 def create_readme(output_dir: Path) -> None:
@@ -409,7 +409,7 @@ See `data-model.md` for complete trait definitions:
     with open(readme_filepath, 'w') as f:
         f.write(readme_content)
 
-    print(f"✓ Created README.md")
+    print("✓ Created README.md")
 
 
 def main() -> None:

@@ -1,8 +1,9 @@
 # ABOUTME: Unit tests for MessageRouter three-channel message routing.
 # ABOUTME: Tests IC/OOC/P2C visibility rules and Redis message storage.
 
-from datetime import datetime
 import json
+from datetime import datetime
+
 import pytest
 
 from src.models.messages import Message, MessageChannel, MessageType
@@ -257,17 +258,25 @@ class TestMessageRouter:
 
     def test_clear_p2c_channel_pattern_delete(self, mock_redis_client):
         """Test clearing P2C channel deletes all character-specific channels"""
-        mock_redis_client.keys.return_value = [
-            b"channel:p2c:char_001",
-            b"channel:p2c:char_002"
-        ]
+        # Mock sscan_iter to return channel keys
+        mock_redis_client.sscan_iter.return_value = iter([
+            "channel:p2c:char_001",
+            "channel:p2c:char_002"
+        ])
 
         router = MessageRouter(mock_redis_client)
         router.clear_channel(MessageChannel.P2C)
 
-        # Verify pattern match and delete
-        mock_redis_client.keys.assert_called_with("channel:p2c:*")
-        mock_redis_client.delete.assert_called()
+        # Verify sscan_iter was called on active_p2c_channels set
+        mock_redis_client.sscan_iter.assert_called_with("active_p2c_channels")
+        # Verify delete was called with the channel keys and the set itself
+        assert mock_redis_client.delete.call_count == 2
+        call_args_list = [str(call) for call in mock_redis_client.delete.call_args_list]
+        # First call should delete the channel keys
+        assert "channel:p2c:char_001" in call_args_list[0]
+        assert "channel:p2c:char_002" in call_args_list[0]
+        # Second call should delete the tracking set
+        assert "active_p2c_channels" in call_args_list[1]
 
     def test_message_ttl_applied(self, mock_redis_client):
         """Test TTL is applied to message channels"""
