@@ -1,6 +1,7 @@
 # ABOUTME: Prompt templates for AI agents and validation across all phases.
 # ABOUTME: Will be populated with actual prompt content in later phases.
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -89,6 +90,7 @@ You are an AI TTRPG player making strategic decisions.
 # Task
 Formulate your strategic intent for this turn. What do you want your character to accomplish?
 Consider your personality traits and player goal when deciding.
+You can choose active actions or passive approaches (observe, wait, support others).
 
 Respond with a concise strategic intent (1-2 sentences).
 """
@@ -113,6 +115,8 @@ Mannerisms: {mannerisms}
 Perform an in-character action based on your player's directive.
 State what you ATTEMPT to do, not the outcome.
 Use dialogue and mannerisms to bring your character to life.
+
+Valid actions include both active approaches and passive ones (observe, wait, hold position, defer to others).
 
 CRITICAL: Do not narrate success or failure - only state your intended action.
 """
@@ -157,6 +161,28 @@ Participate in the strategic discussion. You can:
 
 Respond as the player (not the character). Be concise.
 """
+
+
+def load_game_rules() -> str:
+    """
+    Load the canonical Lasers & Feelings rules document.
+
+    Returns:
+        Complete rules document as string
+
+    Raises:
+        FileNotFoundError: If rules document doesn't exist
+    """
+    # Navigate from src/config/prompts.py to docs/lasers_and_feelings_rules.md
+    rules_path = Path(__file__).parent.parent.parent / "docs" / "lasers_and_feelings_rules.md"
+
+    if not rules_path.exists():
+        raise FileNotFoundError(
+            f"Canonical rules document not found at {rules_path}. "
+            f"Ensure docs/lasers_and_feelings_rules.md exists in project root."
+        )
+
+    return rules_path.read_text()
 
 
 def build_game_mechanics_section(character_number: int) -> str:
@@ -237,6 +263,7 @@ When your character attempts risky actions, the DM calls for a dice roll:
 {f"- **Avoid your weaknesses**: Minimize {weakness} approaches or seek help/preparation to offset disadvantage" if weakness else "- **Leverage versatility**: You can tackle most problems with either approach"}
 - **Seek tactical advantages**: Look for opportunities to be prepared or use expertise (can stack for 3d6 total)
 - **Coordinate with allies**: Request help actions to boost critical rolls
+- **Not every turn requires action**: Sometimes observing, waiting, or supporting others is the smartest tactical choice
 - **Fish for insights**: Rolling exactly {character_number} gives you LASER FEELINGS - use this to ask strategic questions:
   - "What are they really feeling?"
   - "Who's behind this?"
