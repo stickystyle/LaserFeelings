@@ -52,7 +52,11 @@ class Directive(BaseModel):
 
 
 class Action(BaseModel):
-    """In-character action performed by Character agent as cohesive narrative prose"""
+    """In-character action performed by Character agent as cohesive narrative prose
+
+    This model includes support for the LASER FEELINGS mechanic where rolling exactly
+    the character's number allows them to ask the GM a question that must be answered honestly.
+    """
 
     character_id: str = Field(
         description="Character ID performing the action"
@@ -94,6 +98,10 @@ class Action(BaseModel):
     help_justification: str | None = Field(
         default=None,
         description="Explanation of how character is helping (e.g., providing cover fire, technical assistance)"
+    )
+    gm_question: str | None = Field(
+        default=None,
+        description="Question to ask GM if LASER FEELINGS occurs (rolling exactly character number). Examples: 'What are they really feeling?', 'Who's behind this?', 'What's the best way to accomplish X?'"
     )
 
     @model_validator(mode="after")

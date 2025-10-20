@@ -1,17 +1,18 @@
 # ABOUTME: Unit tests for dice rolling utilities
 # ABOUTME: Validates D&D 5e notation parsing and Lasers & Feelings mechanics
 
-import pytest
-from datetime import datetime
+from datetime import UTC, datetime
 
-from src.utils.dice import (
-    parse_dice_notation,
-    roll_dice,
-    roll_d6,
-    validate_lasers_feelings_roll,
-    VALID_DICE_SIDES
-)
+import pytest
+
 from src.models.messages import DiceRoll
+from src.utils.dice import (
+    VALID_DICE_SIDES,
+    parse_dice_notation,
+    roll_d6,
+    roll_dice,
+    validate_lasers_feelings_roll,
+)
 
 
 class TestParseDiceNotation:
@@ -333,14 +334,16 @@ class TestValidateLasersFeelings:
         assert success is False
         assert outcome == "failure"
 
-    def test_lasers_roll_exact_is_complication(self):
-        """Test lasers task: rolling exact number is success with complication"""
+    def test_lasers_roll_exact_is_laser_feelings(self):
+        """Test lasers task: rolling exact number is LASER FEELINGS (deprecated: returns 'complication')"""
         success, outcome = validate_lasers_feelings_roll(
             character_number=4,
             roll_result=4,
             task_type="lasers"
         )
         assert success is True
+        # NOTE: This function is deprecated and returns "complication" for backward compatibility
+        # Modern code should use roll_lasers_feelings() and check has_laser_feelings
         assert outcome == "complication"
 
         success, outcome = validate_lasers_feelings_roll(
@@ -389,14 +392,16 @@ class TestValidateLasersFeelings:
         assert success is False
         assert outcome == "failure"
 
-    def test_feelings_roll_exact_is_complication(self):
-        """Test feelings task: rolling exact number is success with complication"""
+    def test_feelings_roll_exact_is_laser_feelings(self):
+        """Test feelings task: rolling exact number is LASER FEELINGS (deprecated: returns 'complication')"""
         success, outcome = validate_lasers_feelings_roll(
             character_number=3,
             roll_result=3,
             task_type="feelings"
         )
         assert success is True
+        # NOTE: This function is deprecated and returns "complication" for backward compatibility
+        # Modern code should use roll_lasers_feelings() and check has_laser_feelings
         assert outcome == "complication"
 
         success, outcome = validate_lasers_feelings_roll(
@@ -455,21 +460,23 @@ class TestValidateLasersFeelings:
 
     def test_comprehensive_lasers_outcomes(self):
         """Test all possible outcomes for lasers task"""
-        # Character number 3: success on 1-2, complication on 3, failure on 4-6
+        # Character number 3: success on 1-2, LASER FEELINGS on 3, failure on 4-6
+        # NOTE: "complication" is deprecated terminology for LASER FEELINGS
         assert validate_lasers_feelings_roll(3, 1, "lasers") == (True, "success")
         assert validate_lasers_feelings_roll(3, 2, "lasers") == (True, "success")
-        assert validate_lasers_feelings_roll(3, 3, "lasers") == (True, "complication")
+        assert validate_lasers_feelings_roll(3, 3, "lasers") == (True, "complication")  # LASER FEELINGS
         assert validate_lasers_feelings_roll(3, 4, "lasers") == (False, "failure")
         assert validate_lasers_feelings_roll(3, 5, "lasers") == (False, "failure")
         assert validate_lasers_feelings_roll(3, 6, "lasers") == (False, "failure")
 
     def test_comprehensive_feelings_outcomes(self):
         """Test all possible outcomes for feelings task"""
-        # Character number 4: failure on 1-3, complication on 4, success on 5-6
+        # Character number 4: failure on 1-3, LASER FEELINGS on 4, success on 5-6
+        # NOTE: "complication" is deprecated terminology for LASER FEELINGS
         assert validate_lasers_feelings_roll(4, 1, "feelings") == (False, "failure")
         assert validate_lasers_feelings_roll(4, 2, "feelings") == (False, "failure")
         assert validate_lasers_feelings_roll(4, 3, "feelings") == (False, "failure")
-        assert validate_lasers_feelings_roll(4, 4, "feelings") == (True, "complication")
+        assert validate_lasers_feelings_roll(4, 4, "feelings") == (True, "complication")  # LASER FEELINGS
         assert validate_lasers_feelings_roll(4, 5, "feelings") == (True, "success")
         assert validate_lasers_feelings_roll(4, 6, "feelings") == (True, "success")
 
@@ -529,8 +536,8 @@ class TestRollLasersFeelings:
 
     def test_returns_correct_model(self):
         """Test that function returns LasersFeelingRollResult model"""
-        from src.utils.dice import roll_lasers_feelings
         from src.models.dice_models import LasersFeelingRollResult
+        from src.utils.dice import roll_lasers_feelings
 
         result = roll_lasers_feelings(3, "lasers")
         assert isinstance(result, LasersFeelingRollResult)
@@ -647,12 +654,12 @@ class TestRollLasersFeelings:
 
     def test_timestamp_populated(self):
         """Test timestamp is present and recent"""
-        from src.utils.dice import roll_lasers_feelings
-        from datetime import timezone
 
-        before = datetime.now(timezone.utc)
+        from src.utils.dice import roll_lasers_feelings
+
+        before = datetime.now(UTC)
         result = roll_lasers_feelings(3, "lasers")
-        after = datetime.now(timezone.utc)
+        after = datetime.now(UTC)
 
         assert result.timestamp is not None
         assert before <= result.timestamp <= after
@@ -661,8 +668,8 @@ class TestRollLasersFeelings:
 
     def test_lasers_task_success_counting_logic(self):
         """Test lasers task counts successes correctly (roll < number)"""
+
         from src.utils.dice import roll_lasers_feelings
-        import random
 
         # Mock roll_d6 to control results
         original_roll_d6 = roll_d6
@@ -811,7 +818,7 @@ class TestRollLasersFeelings:
             dice_module.roll_d6 = original_roll_d6
 
     def test_outcome_barely_one_success(self):
-        """Test 1 success = barely manage (complication)"""
+        """Test 1 success = barely manage"""
         from src.utils.dice import roll_lasers_feelings
 
         # Mock roll_d6 to control results
@@ -977,9 +984,11 @@ class TestLasersFeelingsResultValidation:
 
     def test_timestamp_must_be_timezone_aware(self):
         """Test that naive datetime raises validation error"""
-        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
         from datetime import datetime
+
         from pydantic import ValidationError
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 
         with pytest.raises(ValidationError, match="timestamp must be timezone-aware"):
             LasersFeelingRollResult(
@@ -997,8 +1006,9 @@ class TestLasersFeelingsResultValidation:
 
     def test_timestamp_accepts_timezone_aware_datetime(self):
         """Test that timezone-aware datetime is accepted"""
+        from datetime import datetime
+
         from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
 
         result = LasersFeelingRollResult(
             character_number=3,
@@ -1010,7 +1020,7 @@ class TestLasersFeelingsResultValidation:
             laser_feelings_indices=[],
             total_successes=1,
             outcome=RollOutcome.BARELY,
-            timestamp=datetime.now(timezone.utc)  # Timezone-aware
+            timestamp=datetime.now(UTC)  # Timezone-aware
         )
         assert result.timestamp.tzinfo is not None
 
@@ -1018,9 +1028,11 @@ class TestLasersFeelingsResultValidation:
 
     def test_die_successes_length_must_match_individual_rolls(self):
         """Test that die_successes length mismatch raises validation error"""
-        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from pydantic import ValidationError
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 
         with pytest.raises(ValidationError, match="individual_rolls length.*must match die_successes length"):
             LasersFeelingRollResult(
@@ -1033,14 +1045,16 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[],
                 total_successes=1,
                 outcome=RollOutcome.BARELY,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )
 
     def test_laser_feelings_indices_must_be_valid(self):
         """Test that invalid laser_feelings_indices raise validation error"""
-        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from pydantic import ValidationError
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 
         # Index too high
         with pytest.raises(ValidationError, match="laser_feelings_indices contains invalid index"):
@@ -1054,7 +1068,7 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[5],  # Index 5 when only 1 die exists
                 total_successes=1,
                 outcome=RollOutcome.BARELY,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )
 
         # Negative index
@@ -1069,14 +1083,16 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[-1],  # Negative index
                 total_successes=1,
                 outcome=RollOutcome.BARELY,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )
 
     def test_total_successes_must_match_actual_count(self):
         """Test that total_successes mismatch raises validation error"""
-        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from pydantic import ValidationError
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 
         with pytest.raises(ValidationError, match="total_successes.*doesn't match count of successful dice"):
             LasersFeelingRollResult(
@@ -1089,13 +1105,14 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[],
                 total_successes=1,  # But claims only 1 success
                 outcome=RollOutcome.BARELY,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )
 
     def test_valid_model_passes_all_validators(self):
         """Test that a valid model passes all validators"""
+        from datetime import datetime
+
         from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
 
         result = LasersFeelingRollResult(
             character_number=3,
@@ -1107,7 +1124,7 @@ class TestLasersFeelingsResultValidation:
             laser_feelings_indices=[2],  # Valid index
             total_successes=3,  # Matches actual count
             outcome=RollOutcome.CRITICAL,
-            timestamp=datetime.now(timezone.utc)  # Timezone-aware
+            timestamp=datetime.now(UTC)  # Timezone-aware
         )
         assert result.dice_count == 3
         assert result.has_laser_feelings is True
@@ -1125,8 +1142,9 @@ class TestLasersFeelingsResultValidation:
 
     def test_roll_outcome_enum_in_model(self):
         """Test that RollOutcome enum works in model"""
+        from datetime import datetime
+
         from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, timezone
 
         for outcome_enum, expected_value in [
             (RollOutcome.FAILURE, "failure"),
@@ -1144,16 +1162,18 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[],
                 total_successes=1,
                 outcome=outcome_enum,
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )
             assert result.outcome == outcome_enum
             assert result.outcome.value == expected_value
 
     def test_roll_outcome_invalid_string_raises_error(self):
         """Test that invalid outcome string raises validation error"""
-        from src.models.dice_models import LasersFeelingRollResult
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from pydantic import ValidationError
+
+        from src.models.dice_models import LasersFeelingRollResult
 
         with pytest.raises(ValidationError):
             LasersFeelingRollResult(
@@ -1166,5 +1186,5 @@ class TestLasersFeelingsResultValidation:
                 laser_feelings_indices=[],
                 total_successes=1,
                 outcome="invalid_outcome",  # Invalid string
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.now(UTC)
             )

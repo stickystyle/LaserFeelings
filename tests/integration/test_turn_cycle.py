@@ -687,12 +687,12 @@ class TestTurnCycleDiceResolution:
         assert final_state["dice_success"] is True
 
     @pytest.mark.asyncio
-    async def test_exact_number_roll_success_with_complication(
+    async def test_exact_number_roll_laser_feelings(
         self,
         turn_manager,
         initial_game_state
     ):
-        """Test rolling exact number = success with complication"""
+        """Test rolling exact number = LASER FEELINGS (success with special insight)"""
         dm_narration = "You attempt a delicate procedure."
         initial_game_state["dm_narration"] = dm_narration
         initial_game_state["dice_action_character"] = "char_001"
@@ -703,7 +703,11 @@ class TestTurnCycleDiceResolution:
 
         final_state = await turn_manager.execute_turn_cycle(initial_game_state)
 
+        # Single die override uses legacy fields
         assert final_state["dice_result"] == 3
-        # Success with complication
         assert final_state["dice_success"] is True
+        # LASER FEELINGS detected (deprecated field dice_complication)
         assert final_state.get("dice_complication") is True
+
+        # Modern multi-die system would use:
+        # assert len(final_state.get("laser_feelings_indices", [])) > 0

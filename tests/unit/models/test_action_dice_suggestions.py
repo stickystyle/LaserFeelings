@@ -606,6 +606,136 @@ class TestTaskTypeValidation:
             )
 
 
+class TestGMQuestionField:
+    """Test suite for gm_question field (LASER FEELINGS mechanic)"""
+
+    def test_action_with_gm_question(self):
+        """Test creating Action with gm_question field"""
+        action = Action(
+            character_id="char_zara_001",
+            narrative_text="I attempt to hack the terminal...",
+            task_type="lasers",
+            gm_question="What security system is protecting this data?"
+        )
+
+        assert action.gm_question == "What security system is protecting this data?"
+
+    def test_action_without_gm_question_defaults_to_none(self):
+        """Test that gm_question defaults to None when not provided"""
+        action = Action(
+            character_id="char_kai_002",
+            narrative_text="I scan the area for threats.",
+            task_type="lasers"
+        )
+
+        assert action.gm_question is None
+
+    def test_action_with_explicit_none_gm_question(self):
+        """Test that gm_question can be explicitly set to None"""
+        action = Action(
+            character_id="char_lyra_003",
+            narrative_text="I approach the negotiations.",
+            task_type="feelings",
+            gm_question=None
+        )
+
+        assert action.gm_question is None
+
+    def test_gm_question_included_in_serialization(self):
+        """Test that gm_question is included in model serialization"""
+        action = Action(
+            character_id="char_alex_004",
+            narrative_text="I pilot through the asteroid field.",
+            task_type="lasers",
+            gm_question="What are they really feeling?"
+        )
+
+        serialized = action.model_dump()
+        assert "gm_question" in serialized
+        assert serialized["gm_question"] == "What are they really feeling?"
+
+    def test_gm_question_none_in_serialization(self):
+        """Test that gm_question=None is included in serialization"""
+        action = Action(
+            character_id="char_trell_005",
+            narrative_text="I fire at the target.",
+            task_type="lasers"
+        )
+
+        serialized = action.model_dump()
+        assert "gm_question" in serialized
+        assert serialized["gm_question"] is None
+
+    def test_gm_question_with_various_question_types(self):
+        """Test gm_question accepts various question formats"""
+        question_examples = [
+            "What are they really feeling?",
+            "Who's behind this?",
+            "What's the best way to accomplish this mission?",
+            "Where is the hidden entrance?",
+            "How can I defuse this situation?",
+            "What's the truth about their motives?",
+            "What do I know about this technology?"
+        ]
+
+        for question in question_examples:
+            action = Action(
+                character_id="char_test_100",
+                narrative_text="I attempt the action.",
+                task_type="lasers",
+                gm_question=question
+            )
+            assert action.gm_question == question
+
+    def test_gm_question_with_long_text(self):
+        """Test that long gm_question strings are accepted"""
+        long_question = "What is the complete historical context of this ancient artifact, including its creators, purpose, and the circumstances that led to its abandonment in this location?"
+
+        action = Action(
+            character_id="char_test_101",
+            narrative_text="I examine the artifact carefully.",
+            task_type="lasers",
+            gm_question=long_question
+        )
+
+        assert action.gm_question == long_question
+        assert len(action.gm_question) > 100
+
+    def test_gm_question_with_unicode_characters(self):
+        """Test that gm_question handles unicode characters"""
+        action = Action(
+            character_id="char_test_102",
+            narrative_text="I investigate the alien text.",
+            task_type="feelings",
+            gm_question="What does this symbol mean: αΩ 中文 🔍?"
+        )
+
+        assert "αΩ" in action.gm_question
+        assert "中文" in action.gm_question
+        assert "🔍" in action.gm_question
+
+    def test_gm_question_combined_with_all_dice_suggestions(self):
+        """Test gm_question works alongside all dice suggestion fields"""
+        action = Action(
+            character_id="char_test_103",
+            narrative_text="I perform the complex technical procedure with team support.",
+            task_type="lasers",
+            is_prepared=True,
+            prepared_justification="I studied the schematics beforehand",
+            is_expert=True,
+            expert_justification="I'm a certified specialist",
+            is_helping=True,
+            helping_character_id="char_test_104",
+            help_justification="I'm guiding them through the process",
+            gm_question="What's the safest approach to disable this system?"
+        )
+
+        assert action.gm_question == "What's the safest approach to disable this system?"
+        assert action.is_prepared is True
+        assert action.is_expert is True
+        assert action.is_helping is True
+
+
 class TestEdgeCases:
     """Test suite for edge cases and boundary conditions"""
 

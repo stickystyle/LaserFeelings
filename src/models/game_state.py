@@ -101,11 +101,12 @@ class GameState(TypedDict):
     is_prepared: NotRequired[bool]  # Character was prepared (bonus die granted)
     is_expert: NotRequired[bool]  # Character is expert (bonus die granted)
     gm_question: NotRequired[str | None]  # Question for DM when LASER FEELINGS occurs
+    laser_feelings_answer: NotRequired[str | None]  # DM's answer to LASER FEELINGS question
 
     # DEPRECATED fields (kept for backward compatibility)
     dice_result: NotRequired[int]  # DEPRECATED: Use individual_rolls[0] instead
     dice_success: NotRequired[bool]  # DEPRECATED: Use die_successes or total_successes
-    dice_complication: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
+    dice_complication: NotRequired[bool]  # DEPRECATED: "complication" is old terminology for LASER FEELINGS. Use len(laser_feelings_indices) > 0
     laser_feelings_occurred: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
 
     # Session tracking

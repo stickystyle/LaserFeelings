@@ -916,8 +916,9 @@ class TestCharacterSuggestedRoll:
 
     def test_display_lasers_feelings_result(self, capsys):
         """Test formatted display of Lasers & Feelings roll result"""
+        from datetime import UTC, datetime
+
         from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, UTC
 
         cli = DMCommandLineInterface()
 
@@ -951,8 +952,9 @@ class TestCharacterSuggestedRoll:
 
     def test_display_lasers_feelings_result_with_laser_feelings(self, capsys):
         """Test display when LASER FEELINGS occurs"""
+        from datetime import UTC, datetime
+
         from src.models.dice_models import LasersFeelingRollResult, RollOutcome
-        from datetime import datetime, UTC
 
         cli = DMCommandLineInterface()
 
@@ -976,6 +978,103 @@ class TestCharacterSuggestedRoll:
         # Verify LASER FEELINGS is displayed
         assert "LASER FEELINGS on die #1!" in captured.out
 
+    def test_display_lasers_feelings_result_with_gm_question(self, capsys):
+        """Test display when LASER FEELINGS occurs with GM question"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll with LASER FEELINGS and a GM question
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[2, 3],
+            die_successes=[True, True],
+            laser_feelings_indices=[1],  # Second die is LASER FEELINGS
+            total_successes=2,
+            outcome=RollOutcome.SUCCESS,
+            gm_question="What is the true purpose of this signal?",
+            timestamp=datetime.now(UTC)
+        )
+
+        cli._display_lasers_feelings_result(roll_result)
+        captured = capsys.readouterr()
+
+        # Verify LASER FEELINGS is displayed
+        assert "LASER FEELINGS on die #2!" in captured.out
+        # Verify the GM question is displayed
+        assert "Suggested Question:" in captured.out
+        assert "What is the true purpose of this signal?" in captured.out
+
+    def test_display_lasers_feelings_result_with_laser_feelings_no_question(self, capsys):
+        """Test display when LASER FEELINGS occurs without GM question"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll with LASER FEELINGS but no question provided
+        roll_result = LasersFeelingRollResult(
+            character_number=4,
+            task_type="feelings",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[4],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question=None,  # No question provided
+            timestamp=datetime.now(UTC)
+        )
+
+        cli._display_lasers_feelings_result(roll_result)
+        captured = capsys.readouterr()
+
+        # Verify LASER FEELINGS is displayed
+        assert "LASER FEELINGS on die #1!" in captured.out
+        # Verify helpful prompt is shown when no question provided
+        assert (
+            "(No question suggested" in captured.out
+            or "ask the character what they want to know" in captured.out
+        )
+
+    def test_display_lasers_feelings_result_no_laser_feelings_no_question_display(self, capsys):
+        """Test that no question section is displayed when no LASER FEELINGS occurs"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll without LASER FEELINGS
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[2, 5],
+            die_successes=[True, False],
+            laser_feelings_indices=[],  # No LASER FEELINGS
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        cli._display_lasers_feelings_result(roll_result)
+        captured = capsys.readouterr()
+
+        # Verify no LASER FEELINGS message
+        assert "LASER FEELINGS" not in captured.out
+        # Verify no question section displayed
+        assert "Suggested Question" not in captured.out
+        assert "No question suggested" not in captured.out
+
 
 # ============================================================================
 # Agent-to-Character Mapping Tests
@@ -988,7 +1087,6 @@ class TestAgentToCharacterMapping:
     def test_load_agent_to_character_mapping_success(self, tmp_path, monkeypatch):
         """Test successful loading of agent-to-character mapping from config files"""
         import json
-        from pathlib import Path
 
         # Create temporary config directory
         config_dir = tmp_path / "config" / "personalities"
@@ -1017,7 +1115,6 @@ class TestAgentToCharacterMapping:
     def test_load_agent_to_character_mapping_multiple_characters(self, tmp_path, monkeypatch):
         """Test loading multiple agent-to-character mappings"""
         import json
-        from pathlib import Path
 
         # Create temporary config directory
         config_dir = tmp_path / "config" / "personalities"
@@ -1066,8 +1163,6 @@ class TestAgentToCharacterMapping:
 
     def test_load_agent_to_character_mapping_invalid_json(self, tmp_path, monkeypatch):
         """Test handling when config file has invalid JSON"""
-        import json
-        from pathlib import Path
 
         # Create temporary config directory
         config_dir = tmp_path / "config" / "personalities"
@@ -1086,8 +1181,10 @@ class TestAgentToCharacterMapping:
         # Verify mapping is empty (invalid file was skipped)
         assert len(cli._agent_to_character) == 0
 
-    def test_execute_character_suggested_roll_uses_correct_character_id(self, tmp_path, monkeypatch):
-        """Test that character suggested roll uses character_id from turn state correctly"""
+    def test_execute_character_suggested_roll_uses_correct_character_id(
+        self, tmp_path, monkeypatch
+    ):
+        """Test that suggested roll uses character_id from turn state correctly"""
         import json
 
         # Create temporary config directory
@@ -1128,3 +1225,488 @@ class TestAgentToCharacterMapping:
         # Should succeed because character_id matches config
         assert result["success"] is True
         assert "roll_result" in result
+
+    def test_execute_character_suggested_roll_with_gm_question(self, tmp_path, monkeypatch):
+        """Test that gm_question from action_dict flows through to roll_result"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 3
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Set up turn state with gm_question
+        gm_question_text = "What is the true purpose of this signal?"
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": False,
+                    "is_expert": False,
+                    "is_helping": False,
+                    "gm_question": gm_question_text
+                }
+            }
+        }
+
+        # Execute roll
+        result = cli._execute_character_suggested_roll()
+
+        # Verify success
+        assert result["success"] is True
+        assert "roll_result" in result
+
+        # Verify gm_question was passed through
+        roll_result = result["roll_result"]
+        assert roll_result.gm_question == gm_question_text
+
+    def test_execute_character_suggested_roll_without_gm_question(self, tmp_path, monkeypatch):
+        """Test that roll works when gm_question is not provided"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Set up turn state without gm_question
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": False,
+                    "is_expert": False,
+                    "is_helping": False
+                }
+            }
+        }
+
+        # Execute roll
+        result = cli._execute_character_suggested_roll()
+
+        # Verify success
+        assert result["success"] is True
+        assert "roll_result" in result
+
+        # Verify gm_question is None when not provided
+        roll_result = result["roll_result"]
+        assert roll_result.gm_question is None
+
+
+# ============================================================================
+# LASER FEELINGS Answer Prompt Tests
+# ============================================================================
+
+
+class TestLaserFeelingsAnswerPrompt:
+    """Test DM prompt for LASER FEELINGS answers"""
+
+    def test_prompt_for_laser_feelings_answer_with_question(self):
+        """Test that DM is prompted for answer when LASER FEELINGS occurs with a question"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result with LASER FEELINGS and a question
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[2, 3],
+            die_successes=[True, True],
+            laser_feelings_indices=[1],
+            total_successes=2,
+            outcome=RollOutcome.SUCCESS,
+            gm_question="What is the true purpose of this signal?",
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() to provide DM answer
+        with patch(
+            'builtins.input', return_value="It's a distress call from a stranded colony ship"
+        ):
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        assert answer == "It's a distress call from a stranded colony ship"
+
+    def test_prompt_for_laser_feelings_answer_without_question(self):
+        """Test that DM is prompted for insight when LASER FEELINGS occurs without a question"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result with LASER FEELINGS but no question
+        roll_result = LasersFeelingRollResult(
+            character_number=4,
+            task_type="feelings",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[4],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question=None,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() to provide DM insight
+        with patch('builtins.input', return_value="You sense fear in their eyes"):
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        assert answer == "You sense fear in their eyes"
+
+    def test_prompt_for_laser_feelings_answer_no_laser_feelings(self):
+        """Test that no prompt appears when no LASER FEELINGS occurs"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result WITHOUT LASER FEELINGS
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[2, 5],
+            die_successes=[True, False],
+            laser_feelings_indices=[],  # No LASER FEELINGS
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() - should NOT be called
+        with patch('builtins.input', return_value="This should not be called") as mock_input:
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Verify input() was NOT called
+        mock_input.assert_not_called()
+        # Verify return value is None
+        assert answer is None
+
+    def test_prompt_for_laser_feelings_answer_empty_answer(self):
+        """Test that empty answers are handled gracefully"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result with LASER FEELINGS
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[3],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question="What do you discover?",
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() to provide empty answer
+        with patch('builtins.input', return_value=""):
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Verify None is returned for empty answer
+        assert answer is None
+
+    def test_prompt_for_laser_feelings_answer_whitespace_only(self):
+        """Test that whitespace-only answers are handled gracefully"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result with LASER FEELINGS
+        roll_result = LasersFeelingRollResult(
+            character_number=4,
+            task_type="feelings",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[4],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() to provide whitespace-only answer
+        with patch('builtins.input', return_value="   "):
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Verify None is returned for whitespace-only answer
+        assert answer is None
+
+    def test_prompt_for_laser_feelings_answer_strips_whitespace(self):
+        """Test that answers with leading/trailing whitespace are trimmed"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        # Create roll result with LASER FEELINGS
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[3],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question="What do you see?",
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input() to provide answer with whitespace
+        with patch('builtins.input', return_value="  A hidden passage  "):
+            answer = cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Verify whitespace was stripped
+        assert answer == "A hidden passage"
+
+    def test_prompt_displays_correct_prompt_with_question(self, capsys):
+        """Test that correct prompt is displayed when gm_question exists"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[3],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question="What is behind the door?",
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input()
+        with patch('builtins.input', return_value="A dark corridor"):
+            cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify "Answer: " prompt was displayed
+        assert "Answer:" in captured.out
+
+    def test_prompt_displays_correct_prompt_without_question(self, capsys):
+        """Test that correct prompt is displayed when no gm_question"""
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        cli = DMCommandLineInterface()
+
+        roll_result = LasersFeelingRollResult(
+            character_number=4,
+            task_type="feelings",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[4],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock input()
+        with patch('builtins.input', return_value="You feel their sincerity"):
+            cli._prompt_for_laser_feelings_answer(roll_result)
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify "What insight does the character gain?" prompt was displayed
+        assert "What insight does the character gain?" in captured.out
+
+    def test_answer_included_in_adjudication_result(self, tmp_path, monkeypatch):
+        """Test LASER FEELINGS answer included in dict from _prompt_for_dm_input_at_phase"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 3  # Using number 3 for predictable rolls
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+        cli._current_phase = GamePhase.DM_ADJUDICATION
+
+        # Set up turn state
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": False,
+                    "is_expert": False,
+                    "is_helping": False,
+                    "gm_question": "What is the ship's status?"
+                }
+            }
+        }
+
+        # Mock the dice roll to ensure LASER FEELINGS occurs
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        mock_roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[3],
+            die_successes=[True],
+            laser_feelings_indices=[0],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            gm_question="What is the ship's status?",
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock roll_lasers_feelings to return our controlled result
+        with patch('src.interface.dm_cli.roll_lasers_feelings', return_value=mock_roll_result):
+            # Mock input() for the DM's answer
+            with patch('builtins.input', side_effect=["/roll", "The ship is critically damaged"]):
+                # First input is for the /roll command, second is for the LASER FEELINGS answer
+                result = cli._prompt_for_dm_input_at_phase("dm_adjudication")
+
+        # Verify answer is included in result
+        assert result["success"] is True
+        assert "data" in result
+        assert "laser_feelings_answer" in result["data"]
+        assert result["data"]["laser_feelings_answer"] == "The ship is critically damaged"
+
+    def test_no_answer_when_no_laser_feelings(self, tmp_path, monkeypatch):
+        """Test that laser_feelings_answer is None when no LASER FEELINGS occurs"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+        cli._current_phase = GamePhase.DM_ADJUDICATION
+
+        # Set up turn state
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": False,
+                    "is_expert": False,
+                    "is_helping": False
+                }
+            }
+        }
+
+        # Mock the dice roll to ensure NO LASER FEELINGS
+        from datetime import UTC, datetime
+
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+
+        mock_roll_result = LasersFeelingRollResult(
+            character_number=2,
+            task_type="lasers",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[5],
+            die_successes=[False],
+            laser_feelings_indices=[],  # No LASER FEELINGS
+            total_successes=0,
+            outcome=RollOutcome.FAILURE,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Mock roll_lasers_feelings to return our controlled result
+        with patch('src.interface.dm_cli.roll_lasers_feelings', return_value=mock_roll_result):
+            # Mock input() - should only be called once for the command
+            with patch('builtins.input', return_value="/roll"):
+                result = cli._prompt_for_dm_input_at_phase("dm_adjudication")
+
+        # Verify laser_feelings_answer is None
+        assert result["success"] is True
+        assert "data" in result
+        assert "laser_feelings_answer" in result["data"]
+        assert result["data"]["laser_feelings_answer"] is None

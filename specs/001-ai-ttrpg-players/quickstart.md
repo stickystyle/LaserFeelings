@@ -314,6 +314,9 @@ uv run python -m src.cli.session --config config/characters.json
 
 **Expected output:**
 ```
+Connected to Redis successfully
+✓ Redis cleaned - starting fresh session
+
 ╔════════════════════════════════════════════════════════════╗
 ║        AI TTRPG Player System - Lasers & Feelings         ║
 ║                  Campaign: Voyage of the Raptor            ║
@@ -329,6 +332,8 @@ Ship: The Raptor
 Session starting...
 [Turn 1] Awaiting DM narration...
 ```
+
+> **Note:** The CLI automatically cleans Redis on startup to ensure a fresh session. This clears all message queues, turn state, and job queues, while preserving your Neo4j graph memory (character histories, relationships, etc.).
 
 ### Step 2: Provide Initial Narration
 
@@ -876,7 +881,7 @@ Over 5+ sessions, watch for:
 2. Roll 1d6
 3. **Lasers task**: Roll **under** your number to succeed
 4. **Feelings task**: Roll **over** your number to succeed
-5. **Exact match**: Success with complication/twist
+5. **Exact match**: LASER FEELINGS - success with special insight (can ask DM a question and receive honest answer)
 
 **Examples:**
 - Zara-7 (number 2) repairs a ship: Lasers task, needs to roll 1 = Success!

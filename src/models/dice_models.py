@@ -21,7 +21,7 @@ class LasersFeelingRollResult(BaseModel):
     Each die is evaluated individually against the character number:
     - Lasers task: roll < character_number to succeed
     - Feelings task: roll > character_number to succeed
-    - Exact match: LASER FEELINGS (success + complication)
+    - Exact match: LASER FEELINGS (success + special insight)
 
     Base roll is 1d6; +1d6 if prepared; +1d6 if expert; +1d6 if helping (max 3d6)
     Total successes determine outcome: 0=failure, 1=barely, 2=success, 3=critical

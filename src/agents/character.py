@@ -146,56 +146,38 @@ Perform this action IN CHARACTER as JSON:
   "narrative_text": "Your complete action as flowing narrative prose",
   "task_type": "lasers" or "feelings" or null,
   "is_prepared": true or false,
-  "prepared_justification": "Why you're prepared (if is_prepared=true)",
+  "prepared_justification": "Why you're prepared (if true)",
   "is_expert": true or false,
-  "expert_justification": "Why you're an expert (if is_expert=true)",
+  "expert_justification": "Why this is your expertise (if true)",
   "is_helping": true or false,
   "helping_character_id": "char_id" or null,
-  "help_justification": "How you're helping (if is_helping=true)"
+  "help_justification": "How you're helping (if true)",
+  "gm_question": "Optional question if special insight occurs"
 }}
 
-Write your action as cohesive narrative that combines:
+Write your action as cohesive narrative combining:
 - What you ATTEMPT to do (intent only, no outcomes)
 - What you say (if anything)
 - Your physical mannerisms and body language
 
-Example: "I tilt my head, processing the data. 'Fascinating,' I say quietly, reaching for my scanner. I attempt to interface with the console's diagnostic port."
+Example: "I tilt my head, processing the data. 'Fascinating,' I say quietly. I attempt to interface with the console's diagnostic port."
 
-DICE ROLL SUGGESTIONS:
-If your action might require a dice roll, provide these fields to help the DM:
+CONTEXTUAL NOTES FOR THE DM:
+If your action might need a dice roll, note relevant context:
 
-- "task_type": Set to "lasers" for technical/logical/analytical tasks, "feelings" for social/emotional/intuitive tasks, or null if no roll needed
-- "is_prepared": Set to true ONLY if you can justify preparation from prior context (studied, gathered intel, brought specific tools)
-- "prepared_justification": REQUIRED if is_prepared=true. Reference specific prior actions, study, or preparation (e.g., "I studied the ship's fuel system during our last jump")
-- "is_expert": Set to true ONLY if this task directly matches your Role (e.g., Engineer repairing systems) or exceptional training mentioned in your character sheet
-- "expert_justification": REQUIRED if is_expert=true. Reference your Role, Style, or specific expertise (e.g., "As the ship's Engineer, fuel cell repair is my specialty")
-- "is_helping": Set to true ONLY if you are actively assisting another specific character with THEIR action (not doing your own thing)
-- "helping_character_id": REQUIRED if is_helping=true. Specify which character you're helping (e.g., "char_zara_001")
-- "help_justification": REQUIRED if is_helping=true. Explain HOW you're helping (e.g., "I'm providing covering fire while they hack the terminal")
+- "task_type": "lasers" for technical/logical tasks, "feelings" for social/intuitive tasks, or null
+- "is_prepared": true if you prepared earlier (studied, gathered tools, etc.) - cite what you did
+- "is_expert": true if this matches your specialty/role - reference your background
+- "is_helping": true if assisting another character (not your own action) - specify who and how
+- "gm_question": Optional question you'd want answered if special insight occurs
 
-IMPORTANT - Be honest about modifiers:
-- Don't claim is_prepared unless you can cite specific prior preparation from the scene context
-- Don't claim is_expert unless it truly matches your Role or exceptional training
-- Don't claim is_helping unless you're assisting another character's action
-- Always provide justifications when claiming prepared/expert/helping bonuses
-- When in doubt, leave the modifier as false - the DM will reward genuine preparation and expertise
-
-Example with dice roll suggestions:
-{{
-  "narrative_text": "I carefully examine the fuel cell wiring, cross-referencing the diagnostic readout with the schematics I memorized. 'The problem is in junction seven,' I mutter, reaching for my precision tools. I attempt to bypass the faulty relay.",
-  "task_type": "lasers",
-  "is_prepared": true,
-  "prepared_justification": "I studied the ship's fuel system schematics during our last hyperspace jump",
-  "is_expert": true,
-  "expert_justification": "As the ship's Engineer, fuel cell repair and electrical systems are my core specialty"
-}}
+Be honest - only claim preparation/expertise you can justify from the scene context.
 
 REMEMBER:
 - Use "I attempt to...", "I try to...", "I aim to..." for actions
 - NEVER say "I successfully...", "I hit...", "I kill..."
-- Express your intent, let the DM narrate what actually happens
+- Express intent only - the DM narrates outcomes
 - Write as flowing prose, not separate sections
-- Be honest about dice roll modifiers - don't claim bonuses you can't justify
 """
 
         try:
@@ -219,6 +201,7 @@ REMEMBER:
                 is_helping=data.get("is_helping", False),
                 helping_character_id=data.get("helping_character_id"),
                 help_justification=data.get("help_justification"),
+                gm_question=data.get("gm_question"),
             )
 
             # Validate narrative_text is present

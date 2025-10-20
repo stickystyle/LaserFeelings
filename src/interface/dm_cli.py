@@ -1075,6 +1075,7 @@ class DMCommandLineInterface:
         is_prepared = action_dict.get("is_prepared", False)
         is_expert = action_dict.get("is_expert", False)
         is_helping = action_dict.get("is_helping", False)
+        gm_question = action_dict.get("gm_question")
 
         # Load character config to get character number
         character_config = self._character_configs.get(character_id)
@@ -1111,7 +1112,8 @@ class DMCommandLineInterface:
                 task_type=task_type,
                 is_prepared=is_prepared,
                 is_expert=is_expert,
-                is_helping=is_helping
+                is_helping=is_helping,
+                gm_question=gm_question
             )
 
             return {
@@ -1149,7 +1151,45 @@ class DMCommandLineInterface:
             lf_indices = ", ".join(str(i+1) for i in roll_result.laser_feelings_indices)
             lines.append(f"  LASER FEELINGS on die #{lf_indices}!")
 
+            # Display GM question if provided
+            if roll_result.gm_question:
+                lines.append(f"    Suggested Question: \"{roll_result.gm_question}\"")
+            else:
+                lines.append(
+                    "    (No question suggested - ask the character what they want to know)"
+                )
+
         print("\n".join(lines))
+
+    def _prompt_for_laser_feelings_answer(self, roll_result: LasersFeelingRollResult) -> str | None:
+        """
+        Prompt DM for answer to LASER FEELINGS question.
+
+        Args:
+            roll_result: LasersFeelingRollResult with has_laser_feelings=True
+
+        Returns:
+            DM's answer as a string, or None if no answer provided
+        """
+        # Only prompt if LASER FEELINGS occurred
+        if not roll_result.has_laser_feelings:
+            return None
+
+        # Determine prompt text
+        if roll_result.gm_question:
+            prompt_text = "\nAnswer: "
+        else:
+            prompt_text = "\nWhat insight does the character gain? "
+
+        # Read DM's answer
+        print(prompt_text, end="", flush=True)
+        answer = input().strip()
+
+        # Handle empty answers gracefully
+        if not answer:
+            return None
+
+        return answer
 
     def _display_ooc_summary(self, turn_number: int, router: MessageRouter | None = None) -> None:
         """
@@ -1314,12 +1354,16 @@ class DMCommandLineInterface:
                     roll_result = lf_result["roll_result"]
                     self._display_lasers_feelings_result(roll_result)
 
+                    # Prompt for LASER FEELINGS answer if needed
+                    laser_feelings_answer = self._prompt_for_laser_feelings_answer(roll_result)
+
                     return {
                         "success": True,
                         "input_type": "adjudication",
                         "data": {
                             "needs_dice": True,
-                            "lasers_feelings_result": roll_result.model_dump()
+                            "lasers_feelings_result": roll_result.model_dump(),
+                            "laser_feelings_answer": laser_feelings_answer
                         }
                     }
 

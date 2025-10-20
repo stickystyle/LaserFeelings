@@ -508,6 +508,7 @@ def dice_resolution_node(state: GameState) -> GameState:
     is_prepared = character_action_dict.get("is_prepared", False)
     is_expert = character_action_dict.get("is_expert", False)
     is_helping = character_action_dict.get("is_helping", False)
+    gm_question = character_action_dict.get("gm_question")
 
     # Get character number from config (MVP hardcoded)
     # TODO: Load from character config in full implementation
@@ -519,7 +520,8 @@ def dice_resolution_node(state: GameState) -> GameState:
         task_type=task_type,
         is_prepared=is_prepared,
         is_expert=is_expert,
-        is_helping=is_helping
+        is_helping=is_helping,
+        gm_question=gm_question
     )
 
     # Log roll details
@@ -552,12 +554,13 @@ def dice_resolution_node(state: GameState) -> GameState:
     # Deprecated fields (backward compatibility)
     dice_result = roll_result.individual_rolls[0] if roll_result.individual_rolls else 0
     dice_success = roll_result.total_successes > 0
-    dice_complication = roll_result.has_laser_feelings or roll_result.outcome.value == "barely"
+    dice_complication = roll_result.has_laser_feelings
 
     return {
         **state,
         # New fields (primary)
         "dice_roll_result": dice_roll_result,
+        "dice_action_character": character_id,  # Store which character rolled
         # Deprecated fields (backward compatibility)
         "dice_result": dice_result,
         "dice_success": dice_success,
@@ -612,6 +615,32 @@ def _create_dm_outcome_node(router: MessageRouter):
             turn_number=state["turn_number"],
             session_number=state.get("session_number")
         )
+
+        # Route LASER FEELINGS answer to character if provided
+        laser_feelings_answer = state.get("laser_feelings_answer")
+        if laser_feelings_answer:
+            # Get character ID from dice roll result
+            character_id = state.get("dice_action_character")
+            if not character_id:
+                # Fallback: Get first active agent and map to character
+                if state["active_agents"]:
+                    agent_id = state["active_agents"][0]
+                    character_id = _get_character_id_for_agent(agent_id)
+
+            if character_id:
+                logger.info(f"Routing LASER FEELINGS answer to {character_id}")
+                router.add_message(
+                    channel=MessageChannel.P2C,
+                    from_agent="dm",
+                    content=f"[LASER FEELINGS Insight]: {laser_feelings_answer}",
+                    message_type=MessageType.DIRECTIVE,
+                    phase=GamePhase.DM_OUTCOME.value,
+                    turn_number=state["turn_number"],
+                    to_agents=[character_id],
+                    session_number=state.get("session_number")
+                )
+            else:
+                logger.warning("Cannot route LASER FEELINGS answer: no character_id found")
 
         return {
             **state,
@@ -1158,10 +1187,16 @@ class TurnOrchestrator:
             # If DM provided manual success/fail ruling, set dice_success flag
             if "manual_success" in dm_input_data:
                 current_state["dice_success"] = dm_input_data["manual_success"]
+            # Extract LASER FEELINGS answer if provided
+            if "laser_feelings_answer" in dm_input_data:
+                current_state["laser_feelings_answer"] = dm_input_data["laser_feelings_answer"]
 
         elif dm_input_type == "outcome":
             # DM provided outcome narration
             current_state["dm_outcome"] = dm_input_data["outcome_text"]
+            # Extract LASER FEELINGS answer if provided during outcome phase
+            if "laser_feelings_answer" in dm_input_data:
+                current_state["laser_feelings_answer"] = dm_input_data["laser_feelings_answer"]
 
         else:
             raise ValueError(f"Invalid dm_input_type: {dm_input_type}")

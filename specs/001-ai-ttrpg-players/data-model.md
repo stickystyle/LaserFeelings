@@ -1013,7 +1013,7 @@ def validate_lasers_roll(number: int, roll: int, task_type: Literal["lasers", "f
     Rules:
     - Lasers task: Roll UNDER number to succeed
     - Feelings task: Roll OVER number to succeed
-    - Roll EXACTLY number: Success with complication
+    - Roll EXACTLY number: LASER FEELINGS - success with special insight (can ask DM a question and receive honest answer)
 
     Args:
         number: Character's Lasers/Feelings number (2-5)
@@ -1021,7 +1021,7 @@ def validate_lasers_roll(number: int, roll: int, task_type: Literal["lasers", "f
         task_type: Whether task requires lasers or feelings
 
     Returns:
-        {success: bool, outcome: "success"|"failure"|"complication"}
+        {success: bool, outcome: "success"|"failure"|"laser_feelings"}
     """
     if not 2 <= number <= 5:
         raise ValueError(f"Character number must be 2-5, got {number}")
@@ -1030,7 +1030,8 @@ def validate_lasers_roll(number: int, roll: int, task_type: Literal["lasers", "f
         raise ValueError(f"Roll must be 1-6, got {roll}")
 
     if roll == number:
-        return {"success": True, "outcome": "complication"}
+        # LASER FEELINGS - exact match grants special insight
+        return {"success": True, "outcome": "laser_feelings"}
 
     if task_type == "lasers":
         success = roll < number
@@ -1053,8 +1054,48 @@ assert validate_lasers_roll(number=2, roll=5, task_type="feelings") == {
 }  # 5 > 2, success on feelings task
 
 assert validate_lasers_roll(number=3, roll=3, task_type="lasers") == {
-    "success": True, "outcome": "complication"
-}  # Exactly 3, success with twist
+    "success": True, "outcome": "laser_feelings"
+}  # Exactly 3, LASER FEELINGS - success with special insight
+```
+
+**Multi-Die Roll Example:**
+
+The modern dice system uses per-die success counting. Here's a complete example:
+
+```python
+from src.utils.dice import roll_lasers_feelings
+
+# Example: Character with number=3 attempts lasers task (prepared + expert = 3 dice)
+result = roll_lasers_feelings(
+    character_number=3,
+    task_type="lasers",
+    is_prepared=True,
+    is_expert=True,
+    gm_question="Is there a hidden passage?"
+)
+
+# Suppose rolls are: [2, 3, 5]
+# Die 0: 2 < 3 → success
+# Die 1: 3 == 3 → LASER FEELINGS (counts as success + grants insight)
+# Die 2: 5 > 3 → failure
+
+# Result fields:
+# result.individual_rolls = [2, 3, 5]
+# result.die_successes = [True, True, False]
+# result.laser_feelings_indices = [1]  # Die 1 was exact match
+# result.total_successes = 2
+# result.outcome = RollOutcome.SUCCESS  # 2 successes = clean success
+# result.has_laser_feelings = True
+# result.gm_question = "Is there a hidden passage?"
+
+# IMPORTANT: Outcome is determined by success count ONLY:
+# - 0 successes = RollOutcome.FAILURE
+# - 1 success = RollOutcome.BARELY
+# - 2 successes = RollOutcome.SUCCESS
+# - 3 successes = RollOutcome.CRITICAL
+
+# LASER FEELINGS is tracked separately via laser_feelings_indices
+# It does NOT change the outcome - it adds a bonus (ask DM a question)
 ```
 
 ### 2. Memory Corruption Probability

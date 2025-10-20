@@ -43,7 +43,7 @@
 - Lower numbers = better at Lasers (technical/logical tasks)
 - Higher numbers = better at Feelings (social/emotional tasks)
 - To succeed at a task: roll 1d6. If attempting a Lasers task, roll UNDER your number. If attempting a Feelings task, roll OVER your number.
-- Rolling exactly your number means you succeed with a twist/complication
+- Rolling exactly your number triggers LASER FEELINGS: you succeed AND get to ask the GM a question which they must answer honestly. This grants special insight into the situation.
 
 **Character Definition:**
 Characters are defined by extremely simple attributes:

@@ -154,7 +154,7 @@ def _evaluate_single_die(
     Rules:
     - Lasers task: Roll UNDER character number to succeed
     - Feelings task: Roll OVER character number to succeed
-    - Roll EXACTLY number: Success with complication (LASER FEELINGS)
+    - Roll EXACTLY number: LASER FEELINGS - success with special insight
 
     Args:
         character_number: Character's Lasers/Feelings number (2-5)
@@ -163,7 +163,10 @@ def _evaluate_single_die(
 
     Returns:
         Tuple of (success: bool, outcome: str)
-        outcome is "success", "failure", or "complication"
+        outcome is "success", "failure", or "complication" (for exact match - LASER FEELINGS)
+
+        NOTE: "complication" is deprecated terminology. For exact matches, prefer using
+        LasersFeelingRollResult.has_laser_feelings or laser_feelings_indices instead.
 
     Raises:
         ValueError: If parameters are out of valid range
@@ -184,9 +187,10 @@ def _evaluate_single_die(
             f"Task type must be 'lasers' or 'feelings', got '{task_type}'"
         )
 
-    # Exact match = success with complication
+    # Exact match = LASER FEELINGS (success + special insight)
+    # NOTE: "complication" is deprecated - use has_laser_feelings in LasersFeelingRollResult
     if roll_result == character_number:
-        return True, "complication"
+        return True, "complication"  # Kept for backward compatibility
 
     # Lasers task: roll under number
     if task_type == "lasers":
@@ -221,7 +225,7 @@ def roll_lasers_feelings(
     - LASER FEELINGS counts as success + grants special insight
     - Total successes determine outcome:
       * 0 successes = failure
-      * 1 success = barely manage (complication)
+      * 1 success = barely manage
       * 2 successes = clean success
       * 3 successes = critical success
 

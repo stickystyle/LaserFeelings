@@ -216,7 +216,7 @@ class MessageRouter:
 
         elif agent_type == "base_persona":
             # Players see OOC messages
-            messages.extend(self._get_ooc_messages_for_player(limit))
+            messages.extend(self.get_ooc_messages_for_player(limit))
             # Players see IC summaries (not full IC messages)
             # (summaries are fetched separately via get_ic_summaries)
 
