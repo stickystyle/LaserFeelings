@@ -1,20 +1,19 @@
 # ABOUTME: Three-channel message router with visibility enforcement for IC/OOC/P2C channels.
 # ABOUTME: Routes messages to appropriate Redis lists and filters by agent type visibility rules.
 
+import json
 from datetime import datetime
 from typing import Literal
-import json
 from uuid import uuid4
 
-from redis import Redis
 from loguru import logger
+from redis import Redis
 
 from src.models.messages import (
+    ICMessageSummary,
     Message,
     MessageChannel,
     MessageType,
-    ICMessageSummary,
-    VISIBILITY_RULES
 )
 
 
@@ -123,7 +122,7 @@ class MessageRouter:
         self.redis.rpush(key, json.dumps(summary.model_dump(), default=str))
         self.redis.expire(key, self.message_ttl)
 
-        logger.debug(f"Created IC summary for players")
+        logger.debug("Created IC summary for players")
 
     def _summarize_action(self, content: str) -> str:
         """
@@ -262,8 +261,18 @@ class MessageRouter:
 
         return messages
 
-    def _get_ooc_messages_for_player(self, limit: int) -> list[Message]:
-        """Retrieve OOC messages for player visibility"""
+    def get_ooc_messages_for_player(self, limit: int = 50) -> list[Message]:
+        """
+        Retrieve OOC messages for player visibility.
+
+        Public API for accessing OOC channel messages.
+
+        Args:
+            limit: Maximum number of recent messages to retrieve
+
+        Returns:
+            List of Message objects from OOC channel
+        """
         key = "channel:ooc:messages"
         raw_messages = self.redis.lrange(key, -limit, -1)
 

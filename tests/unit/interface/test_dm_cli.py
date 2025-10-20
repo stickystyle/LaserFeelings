@@ -1,21 +1,20 @@
 # ABOUTME: Unit tests for DM Command-Line Interface (dm_cli.py).
 # ABOUTME: Tests command parsing, handlers, formatting, and error handling for the DM interface.
 
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.interface.dm_cli import (
-    DMCommandParser,
-    DMCommandType,
-    ParsedCommand,
     CLIFormatter,
     DMCommandLineInterface,
+    DMCommandParser,
+    DMCommandType,
     InvalidCommandError,
+    ParsedCommand,
 )
-from src.models.messages import DMCommand
 from src.models.game_state import GamePhase
-
 
 # ============================================================================
 # T063: Command Parser Tests
@@ -426,6 +425,152 @@ class TestErrorHandling:
 # ============================================================================
 # Integration Tests
 # ============================================================================
+
+
+class TestOOCSummaryFormatting:
+    """Test OOC summary display in CLI"""
+
+    def test_format_ooc_summary_with_messages(self):
+        """Test formatting OOC summary with multiple messages"""
+        from src.models.messages import Message, MessageChannel, MessageType
+
+        formatter = CLIFormatter()
+
+        messages = [
+            Message(
+                message_id="msg_001",
+                channel=MessageChannel.OOC,
+                from_agent="agent_alex_001",
+                content="We should investigate the fuel readings first",
+                timestamp=datetime(2025, 10, 19, 14, 32, 15),
+                message_type=MessageType.DISCUSSION,
+                phase="strategic_intent",
+                turn_number=3,
+                session_number=1
+            ),
+            Message(
+                message_id="msg_002",
+                channel=MessageChannel.OOC,
+                from_agent="agent_jordan_002",
+                content="Agreed. Zara-7 should run diagnostics",
+                timestamp=datetime(2025, 10, 19, 14, 32, 18),
+                message_type=MessageType.DISCUSSION,
+                phase="strategic_intent",
+                turn_number=3,
+                session_number=1
+            )
+        ]
+
+        # Map agent IDs to names
+        agent_names = {
+            "agent_alex_001": "Alex",
+            "agent_jordan_002": "Jordan"
+        }
+
+        output = formatter.format_ooc_summary(messages, turn_number=3, agent_names=agent_names)
+
+        assert "OOC Strategic Discussion" in output
+        assert "Turn 3" in output
+        assert "Alex (Player):" in output
+        assert "Jordan (Player):" in output
+        assert "We should investigate the fuel readings first" in output
+        assert "Agreed. Zara-7 should run diagnostics" in output
+
+    def test_format_ooc_summary_empty_messages(self):
+        """Test formatting OOC summary with no messages returns None"""
+        formatter = CLIFormatter()
+
+        output = formatter.format_ooc_summary([], turn_number=3, agent_names={})
+
+        # Should return None when no messages
+        assert output is None
+
+    def test_format_ooc_summary_without_agent_names(self):
+        """Test formatting OOC summary without agent name mapping"""
+        from src.models.messages import Message, MessageChannel, MessageType
+
+        formatter = CLIFormatter()
+
+        messages = [
+            Message(
+                message_id="msg_001",
+                channel=MessageChannel.OOC,
+                from_agent="agent_unknown_001",
+                content="Unknown agent message",
+                timestamp=datetime(2025, 10, 19, 14, 30, 00),
+                message_type=MessageType.DISCUSSION,
+                phase="strategic_intent",
+                turn_number=1,
+                session_number=1
+            )
+        ]
+
+        output = formatter.format_ooc_summary(messages, turn_number=1, agent_names={})
+
+        # Should fall back to agent_id
+        assert "agent_unknown_001 (Player):" in output
+
+
+class TestDMCLIOOCIntegration:
+    """Test DM CLI integration with OOC display"""
+
+    @patch('src.interface.dm_cli.MessageRouter')
+    def test_display_ooc_summary_fetches_messages(self, mock_router_class):
+        """Test _display_ooc_summary fetches and displays messages"""
+        from src.models.messages import Message, MessageChannel, MessageType
+
+        # Mock message router
+        mock_router = Mock()
+        mock_router_class.return_value = mock_router
+
+        # Mock OOC messages
+        messages = [
+            Message(
+                message_id="msg_001",
+                channel=MessageChannel.OOC,
+                from_agent="agent_alex_001",
+                content="Let's be cautious",
+                timestamp=datetime(2025, 10, 19, 14, 30, 00),
+                message_type=MessageType.DISCUSSION,
+                phase="strategic_intent",
+                turn_number=3,
+                session_number=1
+            )
+        ]
+
+        mock_router.get_ooc_messages_for_player.return_value = messages
+
+        cli = DMCommandLineInterface()
+        cli._turn_number = 3
+
+        # Capture printed output
+        with patch('builtins.print') as mock_print:
+            cli._display_ooc_summary(turn_number=3, router=mock_router)
+
+            # Verify output was printed
+            assert mock_print.called
+            # Find the call that contains OOC summary
+            printed_output = " ".join([str(call[0][0]) for call in mock_print.call_args_list])
+            assert "OOC Strategic Discussion" in printed_output
+
+    @patch('src.interface.dm_cli.MessageRouter')
+    def test_display_ooc_summary_no_messages(self, mock_router_class):
+        """Test _display_ooc_summary handles no messages gracefully"""
+        # Mock message router returning empty list
+        mock_router = Mock()
+        mock_router_class.return_value = mock_router
+        mock_router.get_ooc_messages_for_player.return_value = []
+
+        cli = DMCommandLineInterface()
+
+        # Should not print anything when no messages
+        with patch('builtins.print') as mock_print:
+            cli._display_ooc_summary(turn_number=1, router=mock_router)
+
+            # Should not have printed OOC summary section
+            if mock_print.called:
+                printed_output = " ".join([str(call[0][0]) for call in mock_print.call_args_list])
+                assert "OOC Strategic Discussion" not in printed_output
 
 
 class TestDMCLIIntegration:
