@@ -119,6 +119,27 @@ class DMTextualInterface(App):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self._executor, func)
 
+    def _run_blocking_in_background(self, func):
+        """
+        Start a background task to run a blocking call without awaiting.
+        Errors are logged but don't block the UI.
+
+        Args:
+            func: Blocking callable to run (use lambda to wrap with args)
+
+        Returns:
+            asyncio.Task (you can ignore the return value)
+        """
+
+        async def _background_wrapper():
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(self._executor, func)
+            except Exception as e:
+                logger.error(f"Background task failed: {e}")
+
+        return asyncio.create_task(_background_wrapper())
+
     def compose(self) -> ComposeResult:
         """Create layout with dual-panel view"""
         yield Header(show_clock=True, name="AI TTRPG DM Interface")
@@ -305,20 +326,14 @@ class DMTextualInterface(App):
                 self._clarification_mode = False
                 self._pending_questions = None
 
-                # Call orchestrator to skip remaining clarification (run in background thread)
-                try:
-                    result = await self._run_blocking_call(
-                        lambda: self.orchestrator.resume_turn_with_dm_input(
-                            session_number=self.session_number,
-                            dm_input_type="dm_clarification_answer",
-                            dm_input_data={"answers": [], "force_finish": True},
-                        )
+                # Signal orchestrator to skip remaining clarification - fire-and-forget
+                self._run_blocking_in_background(
+                    lambda: self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="dm_clarification_answer",
+                        dm_input_data={"answers": [], "force_finish": True},
                     )
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
-                except Exception as e:
-                    self.write_game_log(f"[red]✗ Error:[/red] {e}")
-                    logger.error(f"Force finish clarification failed: {e}")
+                )
                 return
 
             # Check for "done" embedded in answer (e.g., "1 done")
@@ -357,42 +372,22 @@ class DMTextualInterface(App):
                 agent_id = question.get("agent_id", "unknown")
                 char_name = self._character_names.get(agent_id, "Unknown")
 
-                # Display confirmation
+                # Display confirmation immediately before returning to user
                 self.write_game_log(
                     f"[green]✓ Answer recorded:[/green] {char_name} - {answer_text}"
                 )
 
-                # Call orchestrator to record answer (single answer at a time)
-                # Run in background thread to keep UI responsive
-                try:
-                    result = await self._run_blocking_call(
-                        lambda: self.orchestrator.resume_turn_with_dm_input(
-                            session_number=self.session_number,
-                            dm_input_type="dm_clarification_answer",
-                            dm_input_data={
-                                "answers": [{"agent_id": agent_id, "answer": answer_text}],
-                                "force_finish": False,
-                            },
-                        )
+                # Run orchestrator call in background without blocking UI
+                self._run_blocking_in_background(
+                    lambda: self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="dm_clarification_answer",
+                        dm_input_data={
+                            "answers": [{"agent_id": agent_id, "answer": answer_text}],
+                            "force_finish": False,
+                        },
                     )
-
-                    # Simply show success - don't poll for new questions yet
-                    # Follow-up questions only appear after user types "done" for current round
-                    # This allows the DM to answer multiple questions from the same round
-                    self.write_game_log(f"[green]✓ Answer recorded for {char_name}[/green]")
-
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
-
-                except Exception as e:
-                    self.write_game_log(f"[red]✗ Failed to record answer:[/red] {e}")
-                    self.write_game_log(
-                        "[yellow]Type 'done' or 'finish' to exit clarification mode[/yellow]"
-                    )
-                    logger.error(f"Answer recording failed: {e}")
-                    # Keep mode active so user can retry or exit manually
-                    # Don't recurse - let user make next decision
-                    return
+                )
 
                 return
 
@@ -413,82 +408,49 @@ class DMTextualInterface(App):
             self._current_roll_suggestion = None  # Clear after handling
 
             if user_input.lower() == "accept":
-                # Accept the suggested roll - let dice resolution proceed (run in background)
-                try:
-                    result = await self._run_blocking_call(
-                        lambda: self.orchestrator.resume_turn_with_dm_input(
-                            session_number=self.session_number,
-                            dm_input_type="adjudication",
-                            dm_input_data={
-                                "needs_dice": True,
-                                # No dice_override - use natural roll
-                            },
-                        )
+                # Accept the suggested roll - fire-and-forget to keep UI responsive
+                self.write_game_log(
+                    f"[green]✓ Roll accepted:[/green] {suggestion.get('suggested_roll')}"
+                )
+                self._run_blocking_in_background(
+                    lambda: self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="adjudication",
+                        dm_input_data={"needs_dice": True},
                     )
-
-                    self.write_game_log(
-                        f"[green]✓ Roll accepted:[/green] {suggestion.get('suggested_roll')}"
-                    )
-
-                    # Update turn state if result indicates new phase
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
-
-                except Exception as e:
-                    self.write_game_log(f"[red]✗ Failed to execute roll:[/red] {e}")
-                    logger.error(f"Roll execution failed: {e}")
+                )
 
             elif user_input.lower() == "success":
-                # Force success - bypass dice entirely (run in background)
-                try:
-                    result = await self._run_blocking_call(
-                        lambda: self.orchestrator.resume_turn_with_dm_input(
-                            session_number=self.session_number,
-                            dm_input_type="adjudication",
-                            dm_input_data={
-                                "needs_dice": False,
-                                "manual_success": True,
-                            },
-                        )
+                # Force success - bypass dice entirely - fire-and-forget
+                self.write_game_log(
+                    f"[green]✓ Auto-success:[/green] {suggestion.get('character_name')}"
+                )
+                self._run_blocking_in_background(
+                    lambda: self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="adjudication",
+                        dm_input_data={
+                            "needs_dice": False,
+                            "manual_success": True,
+                        },
                     )
-
-                    self.write_game_log(
-                        f"[green]✓ Auto-success:[/green] {suggestion.get('character_name')}"
-                    )
-
-                    # Update turn state if result indicates new phase
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
-
-                except Exception as e:
-                    self.write_game_log(f"[red]✗ Failed to mark success:[/red] {e}")
-                    logger.error(f"Force success failed: {e}")
+                )
 
             elif user_input.lower() == "fail":
-                # Force failure - bypass dice entirely (run in background)
-                try:
-                    result = await self._run_blocking_call(
-                        lambda: self.orchestrator.resume_turn_with_dm_input(
-                            session_number=self.session_number,
-                            dm_input_type="adjudication",
-                            dm_input_data={
-                                "needs_dice": False,
-                                "manual_success": False,
-                            },
-                        )
+                # Force failure - bypass dice entirely - fire-and-forget
+                self.write_game_log(
+                    f"[red]✗ Auto-failure:[/red] {suggestion.get('character_name')}"
+                )
+                self._run_blocking_in_background(
+                    lambda: self.orchestrator.resume_turn_with_dm_input(
+                        session_number=self.session_number,
+                        dm_input_type="adjudication",
+                        dm_input_data={
+                            "needs_dice": False,
+                            "manual_success": False,
+                        },
                     )
-
-                    self.write_game_log(
-                        f"[red]✗ Auto-failure:[/red] {suggestion.get('character_name')}"
-                    )
-
-                    # Update turn state if result indicates new phase
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
-
-                except Exception as e:
-                    self.write_game_log(f"[red]✗ Failed to mark failure:[/red] {e}")
-                    logger.error(f"Force failure failed: {e}")
+                )
 
             return
 
@@ -516,8 +478,11 @@ class DMTextualInterface(App):
                     if dice_value < 1 or dice_value > 6:
                         raise ValueError("Dice value must be between 1 and 6")
 
-                    # Execute with dice override (run in background)
-                    result = await self._run_blocking_call(
+                    # Execute with dice override - fire-and-forget
+                    self.write_game_log(
+                        f"[yellow]⤺ Overridden:[/yellow] {char_name} rolls {override_dice}"
+                    )
+                    self._run_blocking_in_background(
                         lambda: self.orchestrator.resume_turn_with_dm_input(
                             session_number=self.session_number,
                             dm_input_type="adjudication",
@@ -527,14 +492,6 @@ class DMTextualInterface(App):
                             },
                         )
                     )
-
-                    self.write_game_log(
-                        f"[yellow]⤺ Overridden:[/yellow] {char_name} rolls {override_dice}"
-                    )
-
-                    # Update turn state if result indicates new phase
-                    if result and "phase_completed" in result:
-                        self.current_phase = GamePhase(result["phase_completed"])
 
                 except ValueError:
                     # Not a simple integer, might be dice notation like "2d6"

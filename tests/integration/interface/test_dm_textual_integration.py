@@ -1,6 +1,7 @@
 # ABOUTME: Integration tests for DMTextualInterface with Textual runtime.
 # ABOUTME: Tests app lifecycle, widget composition, and UI functionality.
 
+import asyncio
 from datetime import datetime
 from unittest.mock import Mock
 
@@ -344,6 +345,12 @@ async def test_roll_response_accept_calls_orchestrator(mock_orchestrator, mock_r
         event = Input.Submitted(input_widget, "accept")
         await app.on_input_submitted(event)
 
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
+
         # Verify orchestrator was called with correct parameters
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
             session_number=1,
@@ -385,6 +392,9 @@ async def test_roll_response_override_calls_orchestrator(mock_orchestrator, mock
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "override 4")
         await app.on_input_submitted(event)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
 
         # Verify orchestrator was called with dice override
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -429,6 +439,9 @@ async def test_roll_response_success_calls_orchestrator(mock_orchestrator, mock_
         event = Input.Submitted(input_widget, "success")
         await app.on_input_submitted(event)
 
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
+
         # Verify orchestrator was called to force success
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
             session_number=1,
@@ -471,6 +484,9 @@ async def test_roll_response_fail_calls_orchestrator(mock_orchestrator, mock_rou
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "fail")
         await app.on_input_submitted(event)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
 
         # Verify orchestrator was called to force failure
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -621,6 +637,9 @@ async def test_answer_clarification_question(mock_orchestrator, mock_router):
         event = Input.Submitted(input_widget, "1 Yes, two guards at the far end")
         await app.on_input_submitted(event)
 
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
+
         # Verify orchestrator was called
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once()
         call_args = mock_orchestrator.resume_turn_with_dm_input.call_args
@@ -649,6 +668,9 @@ async def test_finish_clarification_early(mock_orchestrator, mock_router):
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "finish")
         await app.on_input_submitted(event)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
 
         assert app._clarification_mode is False
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
@@ -818,6 +840,9 @@ async def test_done_in_answer_shows_hint(mock_orchestrator, mock_router):
         # Submit answer containing "done"
         event = Input.Submitted(input_widget, "1 done with this")
         await app.on_input_submitted(event)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.1)
 
         # Should still process the answer (with hint displayed)
         mock_orchestrator.resume_turn_with_dm_input.assert_called_once()
