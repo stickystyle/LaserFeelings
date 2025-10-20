@@ -33,6 +33,7 @@ class GamePhase(str, Enum):
     VALIDATION = "validation"
     DM_ADJUDICATION = "dm_adjudication"
     DICE_RESOLUTION = "dice_resolution"
+    LASER_FEELINGS_QUESTION = "laser_feelings_question"
     DM_OUTCOME = "dm_outcome"
     CHARACTER_REACTION = "character_reaction"
     MEMORY_STORAGE = "memory_storage"
@@ -52,6 +53,7 @@ class GameState(TypedDict):
         "validation",
         "dm_adjudication",
         "dice_resolution",
+        "laser_feelings_question",
         "dm_outcome",
         "character_reaction",
         "memory_storage"
@@ -109,6 +111,9 @@ class GameState(TypedDict):
     dice_complication: NotRequired[bool]  # DEPRECATED: "complication" is old terminology for LASER FEELINGS. Use len(laser_feelings_indices) > 0
     laser_feelings_occurred: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
 
+    # Helper resolution - Phase 1 Issue #2
+    successful_helper_counts: NotRequired[dict[str, int]]  # character_id -> count of successful helpers (≥1 success)
+
     # Session tracking
     session_number: int  # Current game session number
 
@@ -117,6 +122,10 @@ class GameState(TypedDict):
     retry_count: int
     rollback_phase: NotRequired[str | None]
     dm_review_required: NotRequired[bool]  # Flag for DM manual review after validation failures
+
+    # LASER FEELINGS state (Phase 2 Issue #3)
+    laser_feelings_data: NotRequired[dict]  # Stores original roll, action, dice parameters for re-roll
+    waiting_for_gm_answer: NotRequired[bool]  # True when paused waiting for GM answer to LASER FEELINGS question
 
 
 class MemoryQueryState(TypedDict):

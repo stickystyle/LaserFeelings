@@ -1,41 +1,46 @@
 """Data models for AI TTRPG Player System"""
 
-from .personality import (
-    PlayStyle,
-    CharacterStyle,
-    CharacterRole,
-    PlayerPersonality,
-    CharacterSheet,
-)
-from .memory_edge import (
-    MemoryType,
-    CorruptionType,
-    MemoryEdge,
-    CorruptionConfig,
-    MemoryNode,
-    EpisodeMetadata,
-)
 from .game_state import (
+    ConsensusResult,
+    ConsensusState,
     GamePhase,
     GameState,
     MemoryQueryState,
-    ValidationState,
-    ValidationResult,
-    Stance,
     Position,
-    ConsensusState,
-    ConsensusResult,
+    Stance,
+    ValidationResult,
+    ValidationState,
+)
+from .memory_edge import (
+    CorruptionConfig,
+    CorruptionType,
+    EpisodeMetadata,
+    MemoryEdge,
+    MemoryNode,
+    MemoryType,
 )
 from .messages import (
+    VISIBILITY_RULES,
+    DiceRoll,
+    DirectiveMessage,
+    DMCommand,
+    DMCommandType,
+    ICMessageSummary,
+    Message,
     MessageChannel,
     MessageType,
-    Message,
-    DirectiveMessage,
-    ICMessageSummary,
-    DMCommandType,
-    DMCommand,
-    DiceRoll,
-    VISIBILITY_RULES,
+)
+from .personality import (
+    CharacterRole,
+    CharacterSheet,
+    CharacterStyle,
+    PlayerPersonality,
+    PlayStyle,
+)
+from .ship import (
+    ShipConfig,
+    ShipProblem,
+    ShipStrength,
 )
 
 __all__ = [
@@ -45,6 +50,10 @@ __all__ = [
     "CharacterRole",
     "PlayerPersonality",
     "CharacterSheet",
+    # Ship models
+    "ShipConfig",
+    "ShipStrength",
+    "ShipProblem",
     # Memory models
     "MemoryType",
     "CorruptionType",

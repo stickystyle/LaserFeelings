@@ -534,6 +534,105 @@ class TestRollLasersFeelings:
         from src.utils.dice import roll_lasers_feelings
         assert callable(roll_lasers_feelings)
 
+    # Multiple helpers tests (new functionality)
+
+    def test_base_dice_cap_without_helpers(self):
+        """Test base modifiers cap at 3d6 without helpers"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Prepared + expert = 3d6 max
+        result = roll_lasers_feelings(3, "lasers", is_prepared=True, is_expert=True, successful_helpers=0)
+        assert result.dice_count == 3
+        assert len(result.individual_rolls) == 3
+        assert len(result.die_successes) == 3
+
+    def test_one_successful_helper_adds_1d6(self):
+        """Test one successful helper adds +1d6 beyond base cap"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Base 3d6 (prepared + expert) + 1 helper = 4d6
+        result = roll_lasers_feelings(3, "lasers", is_prepared=True, is_expert=True, successful_helpers=1)
+        assert result.dice_count == 4
+        assert len(result.individual_rolls) == 4
+        assert len(result.die_successes) == 4
+
+    def test_two_successful_helpers_add_2d6(self):
+        """Test two successful helpers add +2d6 beyond base cap"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Base 3d6 (prepared + expert) + 2 helpers = 5d6
+        result = roll_lasers_feelings(3, "lasers", is_prepared=True, is_expert=True, successful_helpers=2)
+        assert result.dice_count == 5
+        assert len(result.individual_rolls) == 5
+        assert len(result.die_successes) == 5
+
+    def test_helpers_with_partial_base(self):
+        """Test helpers work with partial base dice"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Base 2d6 (expert only) + 1 helper = 3d6
+        result = roll_lasers_feelings(3, "lasers", is_prepared=False, is_expert=True, successful_helpers=1)
+        assert result.dice_count == 3
+        assert len(result.individual_rolls) == 3
+        assert len(result.die_successes) == 3
+
+        # Base 1d6 (no modifiers) + 2 helpers = 3d6
+        result = roll_lasers_feelings(3, "lasers", is_prepared=False, is_expert=False, successful_helpers=2)
+        assert result.dice_count == 3
+        assert len(result.individual_rolls) == 3
+        assert len(result.die_successes) == 3
+
+    def test_success_counting_with_4plus_dice(self):
+        """Test success counting works correctly with 4+ dice"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Mock roll_d6 to control results
+        original_roll_d6 = roll_d6
+
+        def mock_roll_d6():
+            return mock_results.pop(0)
+
+        # Test with character_number=4, lasers task, 4 dice
+        # Rolls: [1, 2, 3, 5] → 1<4 ✓, 2<4 ✓, 3<4 ✓, 5>4 ✗ → 3 successes
+        mock_results = [1, 2, 3, 5]
+        import src.utils.dice as dice_module
+        dice_module.roll_d6 = mock_roll_d6
+
+        try:
+            result = roll_lasers_feelings(4, "lasers", is_prepared=True, is_expert=True, successful_helpers=1)
+            assert result.dice_count == 4
+            assert result.individual_rolls == [1, 2, 3, 5]
+            assert result.die_successes == [True, True, True, False]
+            assert result.total_successes == 3
+            # With 4+ dice, we can get more than 3 successes
+        finally:
+            dice_module.roll_d6 = original_roll_d6
+
+    def test_five_dice_all_succeed(self):
+        """Test 5 dice can achieve 5 total successes"""
+        from src.utils.dice import roll_lasers_feelings
+
+        # Mock roll_d6 to control results
+        original_roll_d6 = roll_d6
+
+        def mock_roll_d6():
+            return mock_results.pop(0)
+
+        # Test with character_number=5, lasers task, 5 dice
+        # All rolls < 5 should succeed
+        mock_results = [1, 2, 3, 4, 1]
+        import src.utils.dice as dice_module
+        dice_module.roll_d6 = mock_roll_d6
+
+        try:
+            result = roll_lasers_feelings(5, "lasers", is_prepared=True, is_expert=True, successful_helpers=2)
+            assert result.dice_count == 5
+            assert result.individual_rolls == [1, 2, 3, 4, 1]
+            assert result.die_successes == [True, True, True, True, True]
+            assert result.total_successes == 5
+        finally:
+            dice_module.roll_d6 = original_roll_d6
+
     def test_returns_correct_model(self):
         """Test that function returns LasersFeelingRollResult model"""
         from src.models.dice_models import LasersFeelingRollResult
@@ -975,6 +1074,24 @@ class TestRollLasersFeelings:
             roll_lasers_feelings(3, "")
         with pytest.raises(ValueError, match="Task type must be 'lasers' or 'feelings'"):
             roll_lasers_feelings(3, "combat")
+
+    def test_negative_successful_helpers_raises_error(self):
+        """Test that negative successful_helpers raises ValueError"""
+        from src.utils.dice import roll_lasers_feelings
+
+        with pytest.raises(ValueError, match="successful_helpers must be 0-10"):
+            roll_lasers_feelings(3, "lasers", successful_helpers=-1)
+        with pytest.raises(ValueError, match="successful_helpers must be 0-10"):
+            roll_lasers_feelings(4, "feelings", successful_helpers=-5)
+
+    def test_excessive_successful_helpers_raises_error(self):
+        """Test that excessive successful_helpers (>10) raises ValueError"""
+        from src.utils.dice import roll_lasers_feelings
+
+        with pytest.raises(ValueError, match="successful_helpers must be 0-10"):
+            roll_lasers_feelings(3, "lasers", successful_helpers=11)
+        with pytest.raises(ValueError, match="successful_helpers must be 0-10"):
+            roll_lasers_feelings(4, "feelings", successful_helpers=100)
 
 
 class TestLasersFeelingsResultValidation:

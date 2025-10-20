@@ -46,10 +46,10 @@ class LasersFeelingRollResult(BaseModel):
     )
     is_helping: bool = Field(
         default=False,
-        description="Whether character is being helped by another (+1d6)"
+        description="DEPRECATED: Use successful_helpers parameter in roll_lasers_feelings() instead. Whether character is being helped by another (+1d6)"
     )
     individual_rolls: list[int] = Field(
-        description="Individual d6 results (1-3 dice)"
+        description="Individual d6 results (1-3 base dice capped, then +1d6 per successful helper with no limit)"
     )
     die_successes: list[bool] = Field(
         description="Whether each die succeeded (parallel to individual_rolls)"
@@ -60,8 +60,7 @@ class LasersFeelingRollResult(BaseModel):
     )
     total_successes: int = Field(
         ge=0,
-        le=3,
-        description="Total number of successful dice (0-3)"
+        description="Total number of successful dice (0+, no upper limit with helpers)"
     )
     outcome: RollOutcome = Field(
         description="Roll outcome based on success count"

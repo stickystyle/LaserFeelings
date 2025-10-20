@@ -480,15 +480,215 @@ def dm_adjudication_node(state: GameState) -> GameState:
     }
 
 
+def _load_character_number(character_id: str) -> int:
+    """
+    Load character number from config file.
+
+    Args:
+        character_id: Character ID (e.g., 'char_zara_001')
+
+    Returns:
+        Character number (2-5) from config file
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        ValueError: If number is invalid or missing
+    """
+    import json
+    from pathlib import Path
+
+    config_path = Path(f"config/personalities/{character_id}_character.json")
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"No config found for {character_id} at {config_path}")
+
+    with open(config_path) as f:
+        config = json.load(f)
+        number = config.get("number")
+
+        if number is None:
+            raise ValueError(f"Missing 'number' field in config for {character_id}")
+
+        if not isinstance(number, int) or not (2 <= number <= 5):
+            raise ValueError(f"Invalid number {number} for {character_id} (must be 2-5)")
+
+        return number
+
+
+def resolve_helpers_node(state: GameState) -> GameState:
+    """
+    Phase 1 Issue #2: Resolve all helping actions before main action.
+
+    Helper Success Threshold:
+    - Helper is "successful" if their roll achieves total_successes >= 1
+    - Each successful helper grants +1d6 to the character they're helping
+    - Failed helpers (0 successes) provide no bonus and no penalty
+
+    Process:
+    1. Identify primary actions (non-helping actions)
+    2. For each primary character:
+       a. Find all helpers targeting this character
+       b. Validate helpers are targeting valid characters
+       c. For each valid helper:
+          - Load helper's character number from config
+          - Build dice pool (helper's own prepared/expert bonuses apply)
+          - Roll dice using roll_lasers_feelings() with successful_helpers=0
+          - Check if total_successes >= 1 (threshold for successful help)
+       d. Count successful helpers
+       e. Store count in state.successful_helper_counts dict
+
+    Args:
+        state: Current game state with character_actions populated
+
+    Returns:
+        Updated state with:
+        - successful_helper_counts: dict mapping character_id → helper count
+        - current_phase: Set to DICE_RESOLUTION
+        - phase_start_time: Updated to current time
+
+    Raises:
+        No exceptions - errors are logged and handled gracefully
+
+    Notes:
+        - Helpers use their own character_number (loaded from config)
+        - Helpers do not receive helper bonuses themselves (successful_helpers=0)
+        - Invalid helpers (nonexistent targets, config errors) are skipped with warnings
+        - Helper roll failures are treated as 0 successes, not crashes
+    """
+    logger.info(f"[PHASE: RESOLVE_HELPERS] Turn {state['turn_number']}")
+
+    character_actions = state.get("character_actions", {})
+
+    # Initialize successful_helper_counts dict
+    successful_helper_counts: dict[str, int] = {}
+
+    # Identify primary actions (not helping others)
+    primary_actions = {
+        char_id: action
+        for char_id, action in character_actions.items()
+        if not action.get("is_helping", False)
+    }
+
+    logger.debug(f"Found {len(primary_actions)} primary actions")
+
+    # For each primary action, find and process helpers
+    for primary_char_id, primary_action in primary_actions.items():
+        # Find all helpers for this primary character
+        helpers = [
+            action
+            for action in character_actions.values()
+            if (action.get("is_helping", False) and
+                action.get("helping_character_id") == primary_char_id)
+        ]
+
+        if not helpers:
+            # No helpers for this character
+            successful_helper_counts[primary_char_id] = 0
+            logger.debug(f"{primary_char_id} has no helpers")
+            continue
+
+        logger.debug(f"{primary_char_id} has {len(helpers)} helper(s)")
+
+        # Validate all helpers before processing
+        valid_helpers = []
+        for helper_action in helpers:
+            helper_char_id = helper_action.get("character_id", "unknown")
+            target_char_id = helper_action.get("helping_character_id")
+
+            # Check if target exists in primary actions
+            if target_char_id not in primary_actions:
+                logger.warning(
+                    f"Helper {helper_char_id} targeting nonexistent character "
+                    f"{target_char_id} - skipping this helper"
+                )
+                continue  # Skip invalid helper
+
+            valid_helpers.append(helper_action)
+
+        # Process only valid helpers
+        helpers = valid_helpers
+        if not helpers:
+            successful_helper_counts[primary_char_id] = 0
+            logger.debug(f"{primary_char_id} has no valid helpers after validation")
+            continue
+
+        logger.info(f"{primary_char_id} has {len(helpers)} valid helper(s)")
+
+        # Roll for each helper and count successes
+        successful_count = 0
+        for helper_action in helpers:
+            helper_char_id = helper_action.get("character_id", "unknown")
+
+            # Extract helper's dice modifiers
+            task_type = helper_action.get("task_type", "lasers")
+            is_prepared = helper_action.get("is_prepared", False)
+            is_expert = helper_action.get("is_expert", False)
+
+            # Load helper's character number from config
+            try:
+                helper_character_number = _load_character_number(helper_char_id)
+            except (FileNotFoundError, ValueError) as e:
+                logger.warning(
+                    f"Could not load character number for {helper_char_id}: {e}. "
+                    f"Using fallback number 3 (balanced character)"
+                )
+                helper_character_number = 3
+
+            # Roll dice for helper (with their own modifiers, no successful_helpers bonus)
+            try:
+                helper_roll_result = roll_lasers_feelings(
+                    character_number=helper_character_number,
+                    task_type=task_type,
+                    is_prepared=is_prepared,
+                    is_expert=is_expert,
+                    successful_helpers=0  # Helpers don't get helper bonuses
+                )
+
+                # Check if helper succeeded (≥1 success)
+                if helper_roll_result.total_successes >= 1:
+                    successful_count += 1
+                    logger.info(
+                        f"Helper {helper_char_id} succeeded: "
+                        f"{helper_roll_result.individual_rolls} → {helper_roll_result.total_successes} successes"
+                    )
+                else:
+                    logger.info(
+                        f"Helper {helper_char_id} failed: "
+                        f"{helper_roll_result.individual_rolls} → 0 successes (no bonus)"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Helper {helper_char_id} roll failed with error: {e}. "
+                    f"Treating as failed roll (0 successes)"
+                )
+                # Continue with next helper - don't crash the turn
+                continue
+
+        # Store successful helper count for this primary character
+        successful_helper_counts[primary_char_id] = successful_count
+        logger.info(f"{primary_char_id} has {successful_count} successful helper(s)")
+
+    logger.debug(f"Successful helper counts: {successful_helper_counts}")
+
+    return {
+        **state,
+        "successful_helper_counts": successful_helper_counts,
+        "current_phase": GamePhase.DICE_RESOLUTION.value,
+        "phase_start_time": datetime.now()
+    }
+
+
 def dice_resolution_node(state: GameState) -> GameState:
     """
     T053: Execute dice rolls using Lasers & Feelings multi-die system.
+
+    Phase 2 Issue #3: Detects LASER FEELINGS (exact match) and pauses for GM question.
 
     Args:
         state: Current game state
 
     Returns:
-        Updated state with dice roll result fields
+        Updated state with dice roll result fields, or LASER_FEELINGS_QUESTION pause
     """
     logger.info(f"[PHASE: DICE_RESOLUTION] Turn {state['turn_number']}")
 
@@ -514,13 +714,17 @@ def dice_resolution_node(state: GameState) -> GameState:
     # TODO: Load from character config in full implementation
     character_number = 2  # Android Engineer (good at Lasers)
 
+    # Get successful helper count from state (Phase 1 Issue #2)
+    successful_helper_counts = state.get("successful_helper_counts", {})
+    successful_helpers = successful_helper_counts.get(character_id, 0)
+
     # Perform Lasers & Feelings roll
     roll_result = roll_lasers_feelings(
         character_number=character_number,
         task_type=task_type,
         is_prepared=is_prepared,
         is_expert=is_expert,
-        is_helping=is_helping,
+        successful_helpers=successful_helpers,  # Phase 1 Issue #2: Use actual helper count
         gm_question=gm_question
     )
 
@@ -535,6 +739,70 @@ def dice_resolution_node(state: GameState) -> GameState:
     if roll_result.has_laser_feelings:
         logger.info(f"LASER FEELINGS! (rolled exact {character_number} on die(s) {roll_result.laser_feelings_indices})")
 
+    # Phase 2 Issue #3: Check for LASER FEELINGS and pause for GM question
+    if len(roll_result.laser_feelings_indices) > 0:
+        logger.info(f"{character_id} rolled LASER FEELINGS on die {roll_result.laser_feelings_indices[0] + 1}")
+
+        # Map roll result to state fields (same as normal flow for backward compatibility)
+        dice_roll_result = {
+            "character_number": roll_result.character_number,
+            "task_type": roll_result.task_type,
+            "is_prepared": roll_result.is_prepared,
+            "is_expert": roll_result.is_expert,
+            "is_helping": roll_result.is_helping,
+            "individual_rolls": roll_result.individual_rolls,
+            "die_successes": roll_result.die_successes,
+            "laser_feelings_indices": roll_result.laser_feelings_indices,
+            "total_successes": roll_result.total_successes,
+            "outcome": roll_result.outcome.value,
+            "timestamp": roll_result.timestamp
+        }
+
+        # Deprecated fields (backward compatibility)
+        dice_result = roll_result.individual_rolls[0] if roll_result.individual_rolls else 0
+        dice_success = roll_result.total_successes > 0
+        dice_complication = roll_result.has_laser_feelings
+
+        # Store original roll and action for potential modification
+        return {
+            **state,
+            "current_phase": GamePhase.LASER_FEELINGS_QUESTION.value,
+            # Store dice results (for backward compatibility with existing tests)
+            "dice_roll_result": dice_roll_result,
+            "dice_action_character": character_id,
+            "dice_result": dice_result,
+            "dice_success": dice_success,
+            "dice_complication": dice_complication,
+            # LASER FEELINGS specific data
+            "laser_feelings_data": {
+                "character_id": character_id,
+                "original_action": character_action_dict,
+                "original_roll": {
+                    "character_number": roll_result.character_number,
+                    "task_type": roll_result.task_type,
+                    "is_prepared": roll_result.is_prepared,
+                    "is_expert": roll_result.is_expert,
+                    "is_helping": roll_result.is_helping,
+                    "individual_rolls": roll_result.individual_rolls,
+                    "die_successes": roll_result.die_successes,
+                    "laser_feelings_indices": roll_result.laser_feelings_indices,
+                    "total_successes": roll_result.total_successes,
+                    "outcome": roll_result.outcome.value,
+                    "timestamp": roll_result.timestamp
+                },
+                "gm_question": gm_question,
+                "dice_parameters": {
+                    "character_number": character_number,
+                    "task_type": task_type,
+                    "is_prepared": is_prepared,
+                    "is_expert": is_expert,
+                    "successful_helpers": successful_helpers
+                }
+            },
+            "phase_start_time": datetime.now()
+        }
+
+    # No LASER FEELINGS - proceed with normal outcome
     # Map LasersFeelingRollResult to GameState fields
     # New fields (primary)
     dice_roll_result = {
@@ -566,6 +834,33 @@ def dice_resolution_node(state: GameState) -> GameState:
         "dice_success": dice_success,
         "dice_complication": dice_complication,
         "current_phase": GamePhase.DM_OUTCOME.value,
+        "phase_start_time": datetime.now()
+    }
+
+
+def laser_feelings_question_node(state: GameState) -> GameState:
+    """
+    Phase 2 Issue #3: Pause turn and wait for GM to answer character's LASER FEELINGS question.
+
+    This is an interrupt point - the state machine will pause here until
+    the DM provides an answer via the CLI.
+
+    Args:
+        state: Current game state with laser_feelings_data populated
+
+    Returns:
+        State with prompt for DM to answer question
+    """
+    laser_data = state.get("laser_feelings_data", {})
+    character_id = laser_data.get("character_id", "unknown")
+    gm_question = laser_data.get("gm_question", "No question provided")
+
+    logger.info(f"LASER FEELINGS: {character_id} asks GM: {gm_question}")
+
+    # This node just waits - the DM will trigger continuation via CLI
+    return {
+        **state,
+        "waiting_for_gm_answer": True,
         "phase_start_time": datetime.now()
     }
 
@@ -838,6 +1133,25 @@ def check_error_state(state: GameState) -> Literal["continue", "rollback"]:
         return "continue"
 
 
+def check_laser_feelings(state: GameState) -> Literal["question", "outcome"]:
+    """
+    Conditional edge for LASER FEELINGS detection.
+
+    Phase 2 Issue #3: Routes to laser_feelings_question if exact match detected,
+    otherwise proceeds to dm_outcome.
+
+    Args:
+        state: Current game state
+
+    Returns:
+        Route key: "question" if LASER FEELINGS detected, "outcome" otherwise
+    """
+    if state["current_phase"] == GamePhase.LASER_FEELINGS_QUESTION.value:
+        return "question"
+    else:
+        return "outcome"
+
+
 # ============================================================================
 # Validation Retry Node
 # ============================================================================
@@ -976,7 +1290,9 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     workflow.add_node("p2c_directive", p2c_directive_node)
     workflow.add_node("character_action", character_action_node)
     workflow.add_node("dm_adjudication", dm_adjudication_node)
+    workflow.add_node("resolve_helpers", resolve_helpers_node)  # Phase 1 Issue #2
     workflow.add_node("dice_resolution", dice_resolution_node)
+    workflow.add_node("laser_feelings_question", laser_feelings_question_node)  # Phase 2 Issue #3
     workflow.add_node("dm_outcome", dm_outcome_node)
     workflow.add_node("character_reaction", character_reaction_node)
     workflow.add_node("memory_consolidation", memory_consolidation_node)
@@ -1000,8 +1316,23 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     # For Phase 3 MVP, proceed directly to adjudication
     workflow.add_edge("character_action", "dm_adjudication")
 
-    workflow.add_edge("dm_adjudication", "dice_resolution")
-    workflow.add_edge("dice_resolution", "dm_outcome")
+    # Phase 1 Issue #2: Resolve helpers before dice resolution
+    workflow.add_edge("dm_adjudication", "resolve_helpers")
+    workflow.add_edge("resolve_helpers", "dice_resolution")
+
+    # Phase 2 Issue #3: Conditional routing after dice_resolution
+    # If LASER FEELINGS detected, pause for GM question
+    # Otherwise proceed directly to outcome
+    workflow.add_conditional_edges(
+        "dice_resolution",
+        check_laser_feelings,
+        {
+            "question": "laser_feelings_question",
+            "outcome": "dm_outcome"
+        }
+    )
+
+    workflow.add_edge("laser_feelings_question", "dm_outcome")  # After GM answers, proceed to outcome
     workflow.add_edge("dm_outcome", "character_reaction")
     workflow.add_edge("character_reaction", "memory_consolidation")
 
@@ -1010,13 +1341,14 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
 
     # T058: Compile with checkpointing and interrupt points
     # Interrupt before DM input phases to allow interactive CLI prompting
+    # Phase 2 Issue #3: Add laser_feelings_question as interrupt point
     checkpointer = MemorySaver()
     app = workflow.compile(
         checkpointer=checkpointer,
-        interrupt_before=["dm_adjudication", "dm_outcome"]
+        interrupt_before=["dm_adjudication", "laser_feelings_question", "dm_outcome"]
     )
 
-    logger.info("Turn cycle state machine built successfully with interrupt points at dm_adjudication and dm_outcome")
+    logger.info("Turn cycle state machine built successfully with interrupt points at dm_adjudication, laser_feelings_question, and dm_outcome")
     return app
 
 
@@ -1146,18 +1478,24 @@ class TurnOrchestrator:
     def resume_turn_with_dm_input(
         self,
         session_number: int,
-        dm_input_type: Literal["adjudication", "outcome"],
+        dm_input_type: Literal["adjudication", "laser_feelings_answer", "outcome"],
         dm_input_data: dict
     ) -> dict:
         """
         Resume interrupted turn with DM input.
 
+        Phase 2 Issue #3: Added "laser_feelings_answer" input type for LASER FEELINGS flow.
+
         Args:
             session_number: Session to resume
-            dm_input_type: Type of DM input ("adjudication" or "outcome")
+            dm_input_type: Type of DM input:
+                - "adjudication": DM provides dice ruling
+                - "laser_feelings_answer": DM answers LASER FEELINGS question (Phase 2 Issue #3)
+                - "outcome": DM provides outcome narration
             dm_input_data: DM's input data:
-                - For adjudication: {"needs_dice": bool, "dice_override": int | None}
-                - For outcome: {"outcome_text": str}
+                - For adjudication: {"needs_dice": bool, "dice_override": int | None, "laser_feelings_answer": str | None}
+                - For laser_feelings_answer: {"answer": str}
+                - For outcome: {"outcome_text": str, "laser_feelings_answer": str | None}
 
         Returns:
             TurnResult dict, possibly with another interruption
@@ -1190,6 +1528,13 @@ class TurnOrchestrator:
             # Extract LASER FEELINGS answer if provided
             if "laser_feelings_answer" in dm_input_data:
                 current_state["laser_feelings_answer"] = dm_input_data["laser_feelings_answer"]
+
+        elif dm_input_type == "laser_feelings_answer":
+            # Phase 2 Issue #3: DM answered LASER FEELINGS question
+            current_state["laser_feelings_answer"] = dm_input_data["answer"]
+            current_state["waiting_for_gm_answer"] = False
+            # Transition to dm_outcome phase (skip re-roll for MVP)
+            current_state["current_phase"] = GamePhase.DM_OUTCOME.value
 
         elif dm_input_type == "outcome":
             # DM provided outcome narration

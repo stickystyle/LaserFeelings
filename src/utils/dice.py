@@ -208,7 +208,7 @@ def roll_lasers_feelings(
     task_type: str,
     is_prepared: bool = False,
     is_expert: bool = False,
-    is_helping: bool = False,
+    successful_helpers: int = 0,
     gm_question: str | None = None
 ) -> LasersFeelingRollResult:
     """
@@ -218,7 +218,8 @@ def roll_lasers_feelings(
     - Base: 1d6
     - Prepared: +1d6 (2d6 total)
     - Expert: +1d6 (3d6 total if also prepared, 2d6 if not prepared)
-    - Helping: +1d6 (max 3d6 total from all modifiers)
+    - Base modifiers cap at 3d6 maximum
+    - Successful helpers: Each adds +1d6 beyond the base cap (no limit)
     - Each die compared individually to character_number
     - LASERS task: die < number = success, die == number = LASER FEELINGS
     - FEELINGS task: die > number = success, die == number = LASER FEELINGS
@@ -227,14 +228,14 @@ def roll_lasers_feelings(
       * 0 successes = failure
       * 1 success = barely manage
       * 2 successes = clean success
-      * 3 successes = critical success
+      * 3+ successes = critical success
 
     Args:
         character_number: Character's Lasers/Feelings number (2-5)
         task_type: "lasers" or "feelings"
         is_prepared: Whether character was prepared (+1d6)
         is_expert: Whether character is expert (+1d6)
-        is_helping: Whether character is being helped by another (+1d6)
+        successful_helpers: Number of helpers who rolled ≥1 success (each adds +1d6)
         gm_question: Optional question to ask GM if LASER FEELINGS occurs
 
     Returns:
@@ -252,6 +253,10 @@ def roll_lasers_feelings(
         >>> result = roll_lasers_feelings(4, "feelings", is_prepared=True, is_expert=True)
         >>> result.dice_count
         3
+        >>> # Prepared, expert, and 2 successful helpers
+        >>> result = roll_lasers_feelings(4, "feelings", is_prepared=True, is_expert=True, successful_helpers=2)
+        >>> result.dice_count
+        5
     """
     # Validate inputs
     if not 2 <= character_number <= 5:
@@ -265,15 +270,21 @@ def roll_lasers_feelings(
             f"Task type must be 'lasers' or 'feelings', got '{task_type}'"
         )
 
-    # Determine number of dice (max 3d6)
-    dice_count = 1  # Base
+    if not 0 <= successful_helpers <= 10:
+        raise ValueError(
+            f"successful_helpers must be 0-10, got {successful_helpers}"
+        )
+
+    # Calculate base dice (capped at 3d6)
+    base_dice = 1  # Start with 1d6
     if is_prepared:
-        dice_count += 1
+        base_dice += 1
     if is_expert:
-        dice_count += 1
-    if is_helping:
-        dice_count += 1
-    dice_count = min(dice_count, 3)  # Cap at 3 dice
+        base_dice += 1
+    base_dice = min(base_dice, 3)  # Cap base at 3d6
+
+    # Add successful helpers beyond the cap (no limit)
+    dice_count = base_dice + successful_helpers
 
     # Roll all dice
     individual_rolls = [roll_d6() for _ in range(dice_count)]
@@ -305,7 +316,7 @@ def roll_lasers_feelings(
         outcome = RollOutcome.BARELY
     elif total_successes == 2:
         outcome = RollOutcome.SUCCESS
-    else:  # 3 successes
+    else:  # 3+ successes (critical success)
         outcome = RollOutcome.CRITICAL
 
     # Create result
@@ -314,7 +325,7 @@ def roll_lasers_feelings(
         task_type=task_type,
         is_prepared=is_prepared,
         is_expert=is_expert,
-        is_helping=is_helping,
+        is_helping=False,  # Deprecated: kept for model compatibility, use successful_helpers instead
         individual_rolls=individual_rolls,
         die_successes=die_successes,
         laser_feelings_indices=laser_feelings_indices,

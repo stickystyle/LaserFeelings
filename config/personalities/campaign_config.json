@@ -5,10 +5,9 @@
     "ship_name": "The Raptor",
     "ship_strengths": [
       "Fast",
-      "Maneuverable",
-      "Well-armed"
+      "Nimble"
     ],
-    "ship_problem": "Fuel cells depleting rapidly"
+    "ship_problem": "Fuel Hog"
   },
   "corruption_strength": 0.5,
   "characters": [

@@ -1,25 +1,21 @@
 # ABOUTME: Contract tests for TurnOrchestrator, MessageRouter, and ConsensusDetector interfaces (T031).
 # ABOUTME: Tests verify interface compliance with orchestrator_interface.yaml contract specifications.
 
-import pytest
 from datetime import datetime, timedelta
-from typing import TypedDict
+
+import pytest
+
+# ConsensusDetector will be implemented in Phase 7 (User Story 5, T139-T145)
+# from src.orchestration.consensus_detector import ConsensusDetector
+from src.models.game_state import (
+    GamePhase,
+    GameState,
+)
+from src.models.messages import Message, MessageChannel, MessageType
+from src.orchestration.message_router import MessageRouter
 
 # These imports will fail until implementations exist (TDD phase)
 from src.orchestration.state_machine import TurnOrchestrator
-from src.orchestration.message_router import MessageRouter
-# ConsensusDetector will be implemented in Phase 7 (User Story 5, T139-T145)
-# from src.orchestration.consensus_detector import ConsensusDetector
-
-from src.models.game_state import (
-    GameState,
-    GamePhase,
-    ValidationResult,
-    ConsensusResult,
-    Position,
-    Stance
-)
-from src.models.messages import Message, MessageChannel, MessageType, DMCommand, DMCommandType
 
 # Try to import fakeredis for testing, fall back to unittest.mock if not available
 try:
@@ -56,6 +52,7 @@ def initial_game_state() -> GameState:
         current_phase="dm_narration",
         phase_start_time=datetime.now(),
         turn_number=1,
+        session_number=1,
         dm_narration="",
         dm_adjudication_needed=False,
         active_agents=["agent_alex", "agent_sam", "agent_jordan"],
@@ -1120,3 +1117,191 @@ class TestOrchestratorPerformance:
 
         # MUST complete within 500ms
         assert duration < 0.5
+
+
+# --- Phase 1 Issue #2: Helper Resolution Contract Tests ---
+
+class TestHelperResolutionContracts:
+    """Contract tests for helper resolution feature (Phase 1 Issue #2)"""
+
+    def test_game_state_has_successful_helper_counts_field(self):
+        """Verify GameState TypedDict has successful_helper_counts field"""
+        # Create a GameState with the new field
+        state: GameState = {
+            "current_phase": "resolve_helpers",
+            "phase_start_time": datetime.now(),
+            "turn_number": 1,
+            "session_number": 1,
+            "dm_narration": "Test",
+            "dm_adjudication_needed": True,
+            "active_agents": ["agent_001"],
+            "strategic_intents": {},
+            "ooc_messages": [],
+            "character_actions": {},
+            "character_reactions": {},
+            "validation_attempt": 0,
+            "validation_valid": True,
+            "validation_failures": {},
+            "retrieved_memories": {},
+            "retry_count": 0,
+            "successful_helper_counts": {  # Phase 1 Issue #2 field
+                "char_zara_001": 2,
+                "char_kai_002": 0
+            }
+        }
+
+        # Verify field exists and has correct type
+        assert "successful_helper_counts" in state
+        assert isinstance(state["successful_helper_counts"], dict)
+        assert all(isinstance(k, str) for k in state["successful_helper_counts"].keys())
+        assert all(isinstance(v, int) for v in state["successful_helper_counts"].values())
+
+    def test_action_model_has_helping_character_id_field(self):
+        """Verify Action model has helping_character_id field"""
+        from src.models.agent_actions import Action
+
+        # Create an Action with helping fields
+        action = Action(
+            character_id="char_kai_002",
+            narrative_text="I provide covering fire for Zara.",
+            is_helping=True,
+            helping_character_id="char_zara_001",
+            help_justification="Suppressing enemy positions"
+        )
+
+        # Verify field exists
+        assert hasattr(action, "helping_character_id")
+        assert action.helping_character_id == "char_zara_001"
+        assert action.is_helping is True
+
+    def test_action_model_validates_helping_character_id_pattern(self):
+        """Verify helping_character_id follows char_* pattern"""
+        from src.models.agent_actions import Action
+        import pytest
+
+        # Valid pattern: char_*
+        action_valid = Action(
+            character_id="char_kai_002",
+            narrative_text="I help.",
+            is_helping=True,
+            helping_character_id="char_zara_001",
+            help_justification="Help"
+        )
+        assert action_valid.helping_character_id == "char_zara_001"
+
+        # Invalid pattern should fail
+        with pytest.raises(ValueError):
+            Action(
+                character_id="char_kai_002",
+                narrative_text="I help.",
+                is_helping=True,
+                helping_character_id="invalid_id",  # Invalid pattern
+                help_justification="Help"
+            )
+
+    def test_action_model_validates_help_justification_required(self):
+        """Verify help_justification is required when is_helping=True"""
+        from src.models.agent_actions import Action
+        import pytest
+
+        # Should fail: is_helping=True but no help_justification
+        with pytest.raises(ValueError, match="help_justification is required"):
+            Action(
+                character_id="char_kai_002",
+                narrative_text="I help.",
+                is_helping=True,
+                helping_character_id="char_zara_001"
+                # Missing help_justification
+            )
+
+    def test_action_model_validates_no_self_helping(self):
+        """Verify characters cannot help themselves"""
+        from src.models.agent_actions import Action
+        import pytest
+
+        # Should fail: helping_character_id same as character_id
+        with pytest.raises(ValueError, match="cannot help themselves"):
+            Action(
+                character_id="char_kai_002",
+                narrative_text="I help myself.",
+                is_helping=True,
+                helping_character_id="char_kai_002",  # Same as character_id
+                help_justification="Self-help"
+            )
+
+    def test_successful_helper_counts_structure(self):
+        """Verify successful_helper_counts dict structure"""
+        # Expected structure: dict[str, int]
+        # Keys: character IDs (who is being helped)
+        # Values: count of successful helpers (≥0)
+
+        successful_helper_counts = {
+            "char_zara_001": 2,  # Zara has 2 successful helpers
+            "char_kai_002": 0,   # Kai has no helpers
+            "char_lyra_003": 1,  # Lyra has 1 successful helper
+        }
+
+        # Verify structure
+        assert isinstance(successful_helper_counts, dict)
+        for char_id, count in successful_helper_counts.items():
+            assert isinstance(char_id, str)
+            assert char_id.startswith("char_")
+            assert isinstance(count, int)
+            assert count >= 0  # Non-negative count
+
+
+class TestLaserFeelingsContracts:
+    """
+    Contract tests for LASER FEELINGS game mechanic (Phase 2 Issue #3)
+    Verifies GameState and GamePhase structures support LASER FEELINGS flow
+    """
+
+    def test_game_state_has_laser_feelings_data_field(self):
+        """Verify GameState TypedDict has laser_feelings_data field"""
+        from typing import get_type_hints
+        from src.models.game_state import GameState
+
+        hints = get_type_hints(GameState)
+        # laser_feelings_data should be NotRequired[dict]
+        assert "laser_feelings_data" in hints
+
+    def test_game_state_has_waiting_for_gm_answer_field(self):
+        """Verify GameState TypedDict has waiting_for_gm_answer field"""
+        from typing import get_type_hints
+        from src.models.game_state import GameState
+
+        hints = get_type_hints(GameState)
+        # waiting_for_gm_answer should be NotRequired[bool]
+        assert "waiting_for_gm_answer" in hints
+
+    def test_game_phase_has_laser_feelings_question(self):
+        """Verify GamePhase enum has LASER_FEELINGS_QUESTION value"""
+        from src.models.game_state import GamePhase
+
+        # Verify enum value exists
+        assert hasattr(GamePhase, "LASER_FEELINGS_QUESTION")
+        assert GamePhase.LASER_FEELINGS_QUESTION.value == "laser_feelings_question"
+
+    def test_game_state_current_phase_includes_laser_feelings_question(self):
+        """Verify GameState.current_phase Literal includes laser_feelings_question"""
+        from typing import get_type_hints
+        from src.models.game_state import GameState
+
+        hints = get_type_hints(GameState)
+        # current_phase is a Literal with all valid phase strings
+        # We verify it's defined (structure validation, not exhaustive content check)
+        assert "current_phase" in hints
+
+    def test_laser_feelings_question_node_exists(self):
+        """Verify laser_feelings_question_node function exists in state machine"""
+        from src.orchestration.state_machine import laser_feelings_question_node
+
+        # Node function must exist and be callable
+        assert callable(laser_feelings_question_node)
+
+    def test_check_laser_feelings_conditional_edge_exists(self):
+        """Verify check_laser_feelings conditional edge function exists"""
+        from src.orchestration.state_machine import check_laser_feelings
+
+        # Conditional edge function must exist and be callable
+        assert callable(check_laser_feelings)

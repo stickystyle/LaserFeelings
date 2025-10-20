@@ -343,17 +343,54 @@ LIMIT 10
 4. **Memory corruption**: All memories decay over time based on personality traits
 5. **Simplicity first**: Lasers & Feelings is intentionally simple - preserve that simplicity
 
+## Ship Configuration
+
+**Location**: `config/personalities/campaign_config.json` (party-level, under "party" key)
+
+Ship configuration follows Lasers & Feelings rules and includes:
+- **name**: Ship name (e.g., "The Raptor")
+- **ship_strengths**: Two capabilities from the valid list (e.g., ["Fast", "Nimble"])
+- **ship_problem**: One ongoing complication from the valid list (e.g., "Fuel Hog")
+
+**IMPORTANT**: Ship attributes are **purely narrative** and provide **NO mechanical bonuses**. They create fictional situations for the GM to use in storytelling.
+
+**Valid Strengths** (choose exactly 2):
+- Fast
+- Nimble
+- Well-Armed
+- Powerful Shields
+- Superior Sensors
+- Cloaking Device
+- Fightercraft
+
+**Valid Problems** (choose exactly 1):
+- Fuel Hog
+- Only One Medical Pod
+- Horrible Circuit Breakers
+- Grim Reputation
+
+**Example**:
+```json
+"party": {
+  "ship_name": "The Raptor",
+  "ship_strengths": ["Fast", "Nimble"],
+  "ship_problem": "Fuel Hog"
+}
+```
+
+**Narrative Use**: Ship strengths and problems affect the fiction (e.g., "Fast" means you can outrun pursuers narratively, "Fuel Hog" means fuel concerns come up in the story) but do NOT grant dice bonuses or penalties during rolls.
+
 ## Configuration Files
 
-**Character Configuration** (`config/characters.json`):
+**Character Configuration** (`config/personalities/campaign_config.json`):
 ```json
 {
   "campaign_name": "Voyage of the Raptor",
   "dm_name": "Ryan",
   "party": {
     "ship_name": "The Raptor",
-    "ship_strengths": ["Fast", "Maneuverable"],
-    "ship_problem": "Fuel cells depleting"
+    "ship_strengths": ["Fast", "Nimble"],
+    "ship_problem": "Fuel Hog"
   },
   "characters": [
     {

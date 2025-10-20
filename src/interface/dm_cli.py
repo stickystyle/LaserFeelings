@@ -1112,7 +1112,7 @@ class DMCommandLineInterface:
                 task_type=task_type,
                 is_prepared=is_prepared,
                 is_expert=is_expert,
-                is_helping=is_helping,
+                successful_helpers=0,  # TODO(Phase1-Issue2): Will be populated by helper resolution
                 gm_question=gm_question
             )
 

@@ -593,6 +593,105 @@ class CampaignConfig(BaseModel):
         return v
 ```
 
+### ShipConfig
+
+**File**: `src/models/ship.py`
+
+Ship attributes from Lasers & Feelings rules. **Purely narrative - no mechanical bonuses.**
+
+```python
+from typing import Literal
+from pydantic import BaseModel, Field, field_validator
+
+# Valid ship strengths from Lasers & Feelings rules
+ShipStrength = Literal[
+    "Fast",
+    "Nimble",
+    "Well-Armed",
+    "Powerful Shields",
+    "Superior Sensors",
+    "Cloaking Device",
+    "Fightercraft"
+]
+
+# Valid ship problems from Lasers & Feelings rules
+ShipProblem = Literal[
+    "Fuel Hog",
+    "Only One Medical Pod",
+    "Horrible Circuit Breakers",
+    "Grim Reputation"
+]
+
+class ShipConfig(BaseModel):
+    """
+    Configuration for the crew's starship.
+
+    **IMPORTANT**: Ship attributes are PURELY NARRATIVE. They do not provide
+    dice bonuses or penalties. They create fictional situations and complications
+    for the GM to use in storytelling.
+    """
+
+    name: str = Field(
+        description="Ship name (e.g., 'The Raptor', 'Starlight Runner')",
+        min_length=1
+    )
+
+    strengths: list[ShipStrength] = Field(
+        description="Two ship strengths (narrative capabilities, not mechanical bonuses)",
+        min_length=2,
+        max_length=2
+    )
+
+    problem: ShipProblem = Field(
+        description="One ship problem (narrative complication, not mechanical penalty)"
+    )
+
+    @field_validator('name')
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Ensure ship name is not just whitespace"""
+        if v.strip() == "":
+            raise ValueError("Ship name cannot be only whitespace")
+        return v
+
+    def to_narrative_description(self) -> str:
+        """Returns a human-readable description of the ship for scene context."""
+        strengths_str = ", ".join(self.strengths)
+        return (
+            f"Ship: {self.name} "
+            f"(Strengths: {strengths_str}; Problem: {self.problem})"
+        )
+
+    model_config = {"frozen": True}  # Immutable configuration
+```
+
+**Field Descriptions**:
+
+| Field | Type | Validation | Description |
+|-------|------|------------|-------------|
+| name | str | min_length=1, not whitespace-only | Ship name |
+| strengths | list[ShipStrength] | exactly 2 items, valid Literal values | Two capabilities (narrative only) |
+| problem | ShipProblem | valid Literal value | One complication (narrative only) |
+
+**Narrative Use Only**:
+- Ship strengths and problems affect the **fiction** (e.g., "Fast" means you can outrun pursuers narratively)
+- They do **NOT** grant dice bonuses or penalties
+- They create situations and complications for the GM to use in storytelling
+- Example: "Fast" ship might help escape pursuit narratively, but doesn't add dice to rolls
+
+**Example**:
+```python
+ship = ShipConfig(
+    name="The Raptor",
+    strengths=["Fast", "Nimble"],
+    problem="Fuel Hog"
+)
+
+# Include in scene context
+context = f"Scene: Engineering Bay. {ship.to_narrative_description()}"
+# Output: "Scene: Engineering Bay. Ship: The Raptor (Strengths: Fast, Nimble; Problem: Fuel Hog)"
+```
+
 ### Example characters.json
 
 ```json
@@ -601,8 +700,8 @@ class CampaignConfig(BaseModel):
   "dm_name": "Ryan",
   "party": {
     "ship_name": "The Raptor",
-    "ship_strengths": ["Fast", "Maneuverable", "Well-armed"],
-    "ship_problem": "Fuel cells depleting rapidly"
+    "ship_strengths": ["Fast", "Nimble"],
+    "ship_problem": "Fuel Hog"
   },
   "corruption_strength": 0.5,
   "characters": [
