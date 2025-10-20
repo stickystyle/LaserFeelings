@@ -235,9 +235,23 @@ Perform this action IN CHARACTER as JSON:
 Write your action as cohesive narrative combining:
 - What you ATTEMPT to do (intent only, no outcomes)
 - What you say (if anything)
-- Your physical mannerisms and body language
+- Your physical mannerisms and body language (use sparingly for natural variation)
 
-Example: "I tilt my head, processing the data. 'Fascinating,' I say quietly. I attempt to interface with the console's diagnostic port."
+MANNERISM USAGE - IMPORTANT:
+Your mannerisms should feel NATURAL and VARIED, not repeated every turn:
+- Use mannerisms selectively to punctuate key moments or emotional shifts
+- Avoid using the same mannerism multiple turns in a row
+- Let actions speak for themselves sometimes without adding quirks
+- Only include a mannerism if it feels organic to the moment
+
+Good examples showing natural variation:
+1. "I tilt my head, processing the anomaly. 'Interesting,' I say. I attempt to interface with the console."
+2. "I move quickly to the control panel, my hands working with practiced precision. I attempt to override the lock."
+3. "Before I speak, I pause—something's wrong here. I attempt to scan the airlock sensor readings."
+
+Bad examples (repetitive or forced):
+✗ Every action: "I tilt my head. My LED eyes dim. I attempt to..."
+✗ Every turn: "I tilt my head at the console, then tilt my head at the door, then tilt my head again..."
 
 CONTEXTUAL NOTES FOR THE DM:
 If your action might need a dice roll, note relevant context:
@@ -366,11 +380,13 @@ Write your reaction as cohesive narrative that combines:
 - Your emotional/physical response to what happened
 - What you say in reaction (if anything)
 - What you want to do next (if relevant)
+- Your mannerisms (use naturally, not repeating recent ones)
 
 Example: "Relief washes over me. 'We did it!' I exclaim, allowing a rare smile. I want to examine the now-active systems to ensure stability."
 
 React authentically to the outcome. Show emotion, personality, and character voice.
 This is a REACTION, not a new action - respond to what happened.
+Vary your mannerisms across reactions - don't repeat the same physical quirk every turn.
 Write as flowing prose, not separate sections.
 """
 
