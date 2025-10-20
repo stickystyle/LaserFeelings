@@ -883,5 +883,12 @@ async def test_connection_error_during_follow_up_poll_exits_mode(
         event = Input.Submitted(input_widget, "1 Yes, there are guards")
         await app.on_input_submitted(event)
 
-        # Connection error should exit clarification mode
+        # Answer should be recorded successfully
+        assert app._clarification_mode is True
+
+        # Type "done" to trigger follow-up polling
+        event = Input.Submitted(input_widget, "done")
+        await app.on_input_submitted(event)
+
+        # Connection error during follow-up poll should exit clarification mode
         assert app._clarification_mode is False

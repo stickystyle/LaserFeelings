@@ -231,11 +231,55 @@ class DMTextualInterface(App):
 
         # Check if we're in clarification mode first (highest priority)
         if self._clarification_mode and self._pending_questions:
-            # Handle "done" command to finish answering questions
+            # Handle "done" command to finish answering questions for this round
             if user_input.lower() == "done":
                 self.write_game_log("[green]✓ Done answering questions[/green]")
-                self._clarification_mode = False
-                self._pending_questions = None
+                self.write_game_log("[dim]Checking for follow-up questions...[/dim]")
+
+                # Poll for follow-up questions after DM finishes current round
+                max_wait_time = 5.0  # seconds
+                poll_interval = 0.5
+                elapsed = 0.0
+                new_questions = None
+
+                try:
+                    while elapsed < max_wait_time:
+                        new_questions = self._fetch_new_clarification_questions()
+                        if new_questions:
+                            count = len(new_questions)
+                            self.write_game_log(
+                                f"[yellow]↻ Found {count} follow-up question(s)[/yellow]"
+                            )
+                            break
+
+                        await asyncio.sleep(poll_interval)
+                        elapsed += poll_interval
+
+                    if not new_questions:
+                        new_questions = []
+
+                    if new_questions:
+                        # Display new round of questions
+                        self.show_clarification_questions(
+                            {
+                                "round": self._questions_round + 1,
+                                "questions": new_questions,
+                            }
+                        )
+                    else:
+                        self.write_game_log(
+                            "[yellow]⤳ No follow-up questions. Clarification complete.[/yellow]"
+                        )
+                        self._clarification_mode = False
+                        self._pending_questions = None
+
+                except (ConnectionError, TimeoutError):
+                    self.write_game_log(
+                        "[red]✗ Cannot continue - connection issue with orchestrator[/red]"
+                    )
+                    self._clarification_mode = False
+                    return
+
                 return
 
             # Handle "finish" to force end of clarification rounds
@@ -310,56 +354,13 @@ class DMTextualInterface(App):
                         },
                     )
 
-                    # Check for follow-up questions after orchestrator processes answer
-                    # The graph will loop back to collect node and may generate new questions
-                    self.write_game_log("[dim]Checking for follow-up questions...[/dim]")
+                    # Simply show success - don't poll for new questions yet
+                    # Follow-up questions only appear after user types "done" for current round
+                    # This allows the DM to answer multiple questions from the same round
+                    self.write_game_log(f"[green]✓ Answer recorded for {char_name}[/green]")
 
-                    # Poll with timeout for orchestrator to generate follow-up questions
-                    max_wait_time = 5.0  # seconds
-                    poll_interval = 0.5
-                    elapsed = 0.0
-                    new_questions = None
-
-                    try:
-                        while elapsed < max_wait_time:
-                            new_questions = self._fetch_new_clarification_questions()
-                            if new_questions:
-                                count = len(new_questions)
-                                self.write_game_log(
-                                    f"[yellow]↻ Found {count} follow-up question(s)[/yellow]"
-                                )
-                                break
-
-                            await asyncio.sleep(poll_interval)
-                            elapsed += poll_interval
-
-                        if not new_questions:
-                            new_questions = []
-
-                        if new_questions:
-                            # Display new round of questions
-                            self.show_clarification_questions(
-                                {
-                                    "round": self._questions_round + 1,
-                                    "questions": new_questions,
-                                }
-                            )
-                        else:
-                            self.write_game_log(
-                                "[yellow]⤳ No follow-up questions. Clarification complete.[/yellow]"
-                            )
-                            self._clarification_mode = False
-                            self._pending_questions = None
-
-                        if result and "phase_completed" in result:
-                            self.current_phase = GamePhase(result["phase_completed"])
-
-                    except (ConnectionError, TimeoutError):
-                        self.write_game_log(
-                            "[red]✗ Cannot continue - connection issue with orchestrator[/red]"
-                        )
-                        self._clarification_mode = False
-                        return
+                    if result and "phase_completed" in result:
+                        self.current_phase = GamePhase(result["phase_completed"])
 
                 except Exception as e:
                     self.write_game_log(f"[red]✗ Failed to record answer:[/red] {e}")
