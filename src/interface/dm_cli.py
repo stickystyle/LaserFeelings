@@ -1583,6 +1583,33 @@ class DMCommandLineInterface:
                 }
             }
 
+        elif awaiting_phase == "laser_feelings_question":
+            # Prompt for LASER FEELINGS answer
+            print("\n=== LASER FEELINGS - DM Answer Required ===")
+            print("The character rolled LASER FEELINGS and asked a question.")
+            print("Provide an honest answer to their question.")
+            print(self.formatter.format_awaiting_dm_input(
+                current_phase=GamePhase.LASER_FEELINGS_QUESTION
+            ))
+
+            # Read DM's answer
+            user_input = input().strip()
+
+            if not user_input:
+                return {
+                    "success": False,
+                    "error": "Empty LASER FEELINGS answer",
+                    "suggestion": "Provide an honest answer to the character's question"
+                }
+
+            return {
+                "success": True,
+                "input_type": "laser_feelings_answer",
+                "data": {
+                    "answer": user_input
+                }
+            }
+
         else:
             return {
                 "success": False,
