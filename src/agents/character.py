@@ -25,7 +25,7 @@ class CharacterAgent:
     def __init__(
         self,
         character_id: str,
-        character_sheet: CharacterSheet,
+        character_sheet: CharacterSheet | None = None,
         personality: PlayerPersonality | None = None,
         memory: CorruptedTemporalMemory | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -37,7 +37,7 @@ class CharacterAgent:
 
         Args:
             character_id: Unique identifier for this character (e.g., 'char_zara_001')
-            character_sheet: Lasers & Feelings character sheet with roleplay traits
+            character_sheet: Lasers & Feelings character sheet with roleplay traits (optional for reformulation)
             personality: Player personality (affects interpretation style, optional for testing)
             memory: Memory interface for character-specific memories (optional for testing)
             openai_client: AsyncOpenAI client for LLM calls (optional for testing)
@@ -50,10 +50,25 @@ class CharacterAgent:
         self._memory = memory
         self._openai_client = openai_client
         self._llm_client = LLMClient(openai_client, model) if openai_client else None
+        self.model = model
+        self.openai_client = openai_client
         self.temperature = temperature
 
     def _build_character_system_prompt(self) -> str:
         """Build system prompt incorporating character traits and speech patterns."""
+        # If no character_sheet (e.g., during reformulation MVP), use minimal prompt
+        if not self.character_sheet:
+            return """You are roleplaying as a character in a tabletop RPG.
+
+CRITICAL RULES:
+1. You express INTENT only, never outcomes
+2. Use "attempt", "try", "aim to" - never "successfully", "hits", "kills"
+3. Do NOT narrate results - that's the DM's job
+4. Stay in character voice at all times
+
+You are performing IN CHARACTER. Bring this character to life!
+"""
+
         speech_patterns = "\n".join([
             f"- {pattern}" for pattern in self.character_sheet.speech_patterns
         ]) if self.character_sheet.speech_patterns else "- Speaks naturally"
@@ -129,6 +144,7 @@ You are performing IN CHARACTER. Bring this character to life!
         directive: Directive,
         scene_context: str,
         ic_messages: list[dict] | None = None,
+        valid_character_ids: list[str] | None = None,
     ) -> Action:
         """
         Execute in-character action based on player directive.
@@ -144,6 +160,8 @@ You are performing IN CHARACTER. Bring this character to life!
             directive: High-level instruction from player layer
             scene_context: Current scene from DM
             ic_messages: Recent in-character messages for context (optional)
+            valid_character_ids: List of valid party member character IDs
+                for helping mechanic (optional)
 
         Returns:
             Action with narrative_text combining intent, dialogue, and mannerisms
@@ -164,6 +182,32 @@ You are performing IN CHARACTER. Bring this character to life!
 
         system_prompt = self._build_character_system_prompt()
 
+        # Build valid character IDs section
+        valid_chars_section = ""
+        if valid_character_ids and len(valid_character_ids) > 0:
+            char_list = "\n".join([f"  - {char_id}" for char_id in valid_character_ids])
+            valid_chars_section = f"""
+VALID CHARACTERS IN YOUR PARTY:
+{char_list}
+
+IMPORTANT: The "is_helping" flag only applies to party members performing their OWN actions.
+You can help another character (like another party member) who is attempting something,
+but NOT NPCs. If an NPC needs your assistance (e.g., you're disabling their ship),
+that's YOUR action, not helping.
+Only set is_helping=true if a PARTY MEMBER is performing an action and you're providing support.
+The helping_character_id must be one of the valid character IDs listed above.
+"""
+        else:
+            valid_chars_section = """
+VALID CHARACTERS IN YOUR PARTY:
+  (None specified)
+
+IMPORTANT: The "is_helping" flag only applies to party members performing their OWN actions.
+You can help another character who is attempting something, but NOT NPCs.
+If an NPC needs your assistance, that's YOUR action, not helping.
+Only set is_helping=true if a PARTY MEMBER is performing an action and you're providing support.
+"""
+
         user_prompt = f"""Scene:
 {scene_context}
 {ic_context}
@@ -173,7 +217,7 @@ Player directive:
 
 {f"Tactical guidance: {directive.tactical_guidance}" if directive.tactical_guidance else ""}
 {f"Emotional tone: {directive.emotional_tone}" if directive.emotional_tone else ""}
-
+{valid_chars_section}
 Perform this action IN CHARACTER as JSON:
 {{
   "narrative_text": "Your complete action as flowing narrative prose",
@@ -353,3 +397,77 @@ Write as flowing prose, not separate sections.
 
         except json.JSONDecodeError as e:
             raise ValidationFailed(f"Failed to parse reaction JSON: {e}") from e
+
+    async def reformulate_action_after_laser_feelings(
+        self,
+        directive: str,
+        dm_narration: str,
+        scene_context: dict,
+        character_sheet_config: dict,
+    ) -> Action:
+        """
+        Reformulate character action after LASER FEELINGS answer received.
+
+        After the player's strategy is reformulated based on the LASER FEELINGS answer,
+        the character receives a new P2C directive and reformulates their action accordingly.
+        The character interprets the new directive through their personality and expresses it
+        as a new intent-based action (still no outcome narration).
+
+        Args:
+            directive: Player's new directive after considering LASER FEELINGS answer
+            dm_narration: Original DM narration
+            scene_context: Scene context dict
+            character_sheet_config: Character configuration dict
+
+        Returns:
+            Reformulated Action model
+
+        Raises:
+            ValidationFailed: When action validation fails
+        """
+        llm_client = LLMClient(self.openai_client, model=self.model, temperature=self.temperature)
+
+        system_prompt = self._build_character_system_prompt()
+
+        prompt = f"""SCENE:
+{dm_narration}
+
+NEW DIRECTIVE FROM YOUR PLAYER:
+{directive}
+
+Your player just rolled LASER FEELINGS and received new information. Now that you know more,
+you're reconsidering your approach. Based on this new directive, what is your NEW action?
+
+Remember:
+- ONLY express your intent and what you try to do
+- NEVER narrate outcomes or results
+- NEVER say "I successfully..." or "I kill..." - only express what you attempt
+- Your character personality should shine through
+
+Respond with JSON:
+{{
+  "narrative_text": "Your reformulated character action (intent only, no outcomes)"
+}}"""
+
+        response = await llm_client.call_llm(prompt, system_prompt)
+
+        try:
+            result = json.loads(response)
+            narrative_text = result.get("narrative_text", "").strip()
+
+            if not narrative_text:
+                raise ValidationFailed("Action missing narrative_text")
+
+            action = Action(
+                character_id=self.character_id,
+                narrative_text=narrative_text,
+                task_type=None,  # Not set during reformulation
+                is_prepared=False,
+                is_expert=False,
+                is_helping=False,
+            )
+
+            return action
+
+        except json.JSONDecodeError as e:
+            raise ValidationFailed(f"Failed to parse reformulated action JSON: {e}") from e

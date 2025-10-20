@@ -46,6 +46,12 @@ def _create_character_action_node(character_queue: Queue, router: MessageRouter)
 
         character_actions: dict[str, dict] = {}
 
+        # Compute all character IDs for helping mechanic validation
+        all_character_ids = [
+            _get_character_id_for_agent(agent_id)
+            for agent_id in state["active_agents"]
+        ]
+
         # Dispatch jobs for each character
         jobs: dict[str, Job] = {}
         for agent_id in state["active_agents"]:
@@ -104,6 +110,7 @@ def _create_character_action_node(character_queue: Queue, router: MessageRouter)
                     scene_context,
                     placeholder_character_sheet,
                     ic_messages,
+                    all_character_ids,
                 ),
                 job_timeout=30,
                 result_ttl=300,

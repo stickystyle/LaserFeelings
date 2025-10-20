@@ -228,7 +228,8 @@ class TestPerformActionGmQuestion:
             assert "roll UNDER" not in user_prompt
             assert "roll OVER" not in user_prompt
             # Should be concise compared to old prompt which had extensive mechanics education
-            assert len(user_prompt.split('\n')) < 50
+            # Note: The addition of valid_character_ids section increased line count slightly
+            assert len(user_prompt.split('\n')) < 60
 
     @pytest.mark.asyncio
     async def test_json_schema_includes_gm_question_field(
@@ -513,3 +514,233 @@ class TestRuntimeDependencies:
         # Act & Assert
         with pytest.raises(RuntimeError, match="CharacterAgent requires openai_client"):
             await agent.perform_action(directive, "Scene context")
+
+
+class TestValidCharacterIdsForHelping:
+    """Test valid_character_ids parameter for helping mechanic"""
+
+    @pytest.mark.asyncio
+    async def test_perform_action_with_valid_helping_character(
+        self, character_agent, mock_openai_client
+    ):
+        """Test that action succeeds with valid helping_character_id from provided list"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Help Kai repair the engine",
+        )
+        scene_context = "Kai is struggling with the damaged engine."
+        valid_character_ids = ["char_kai_004", "char_quinn_003", "char_zara_001"]
+
+        llm_response = {
+            "narrative_text": "I provide technical assistance to Kai with my tools.",
+            "task_type": "lasers",
+            "is_helping": True,
+            "helping_character_id": "char_kai_004",
+            "help_justification": "Providing technical expertise for engine repair"
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act
+            action = await character_agent.perform_action(
+                directive, scene_context, valid_character_ids=valid_character_ids
+            )
+
+            # Assert
+            assert action.is_helping is True
+            assert action.helping_character_id == "char_kai_004"
+            assert action.help_justification == "Providing technical expertise for engine repair"
+            assert action.narrative_text == "I provide technical assistance to Kai with my tools."
+
+    @pytest.mark.asyncio
+    async def test_perform_action_rejects_invalid_helping_character(
+        self, character_agent, mock_openai_client
+    ):
+        """Test that Pydantic validation fails when helping_character_id doesn't match pattern"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Help with the task",
+        )
+        scene_context = "Someone needs help."
+        valid_character_ids = ["char_kai_004"]
+
+        # LLM returns invalid character ID (like an NPC name)
+        llm_response = {
+            "narrative_text": "I help Zorgon with the controls.",
+            "task_type": "lasers",
+            "is_helping": True,
+            "helping_character_id": "Zorgon",  # Invalid - doesn't match pattern
+            "help_justification": "Assisting with controls"
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act & Assert
+            # Pydantic should raise ValidationError due to pattern mismatch
+            with pytest.raises(Exception) as exc_info:
+                await character_agent.perform_action(
+                    directive, scene_context, valid_character_ids=valid_character_ids
+                )
+
+            # Check that it's a validation error (could be wrapped)
+            assert "pattern" in str(exc_info.value).lower() or "char_" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_perform_action_with_npc_in_scene(
+        self, character_agent, mock_openai_client
+    ):
+        """Test that NPC actions work without is_helping (it's the character's own action)"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Disable Zorgon's ship systems",
+        )
+        scene_context = "Zorgon's ship is nearby. The NPC Zorgon is hostile."
+        valid_character_ids = ["char_kai_004", "char_zara_001"]
+
+        # This is Zara's action (disabling ship), NOT helping Zorgon
+        llm_response = {
+            "narrative_text": "I attempt to remotely disable Zorgon's ship propulsion systems.",
+            "task_type": "lasers",
+            "is_helping": False,
+            "helping_character_id": None,
+            "is_expert": True,
+            "expert_justification": "Ship systems hacking is my specialty"
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act
+            action = await character_agent.perform_action(
+                directive, scene_context, valid_character_ids=valid_character_ids
+            )
+
+            # Assert - should succeed without is_helping
+            assert action.is_helping is False
+            assert action.helping_character_id is None
+            expected = "I attempt to remotely disable Zorgon's ship propulsion systems."
+            assert action.narrative_text == expected
+
+    @pytest.mark.asyncio
+    async def test_perform_action_without_valid_character_ids(
+        self, character_agent, mock_openai_client
+    ):
+        """Test backward compatibility when valid_character_ids is None"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Scan the area",
+        )
+        scene_context = "Unknown territory."
+
+        llm_response = {
+            "narrative_text": "I attempt to scan for life signs and hazards.",
+            "task_type": "lasers",
+            "is_helping": False,
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act - call without valid_character_ids parameter (backward compatibility)
+            action = await character_agent.perform_action(directive, scene_context)
+
+            # Assert
+            assert action.narrative_text == "I attempt to scan for life signs and hazards."
+            assert action.is_helping is False
+
+    @pytest.mark.asyncio
+    async def test_prompt_includes_valid_character_ids_when_provided(
+        self, character_agent, mock_openai_client
+    ):
+        """Test that the prompt includes valid character IDs section when provided"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Help with repairs",
+        )
+        scene_context = "Repair scenario."
+        valid_character_ids = ["char_kai_004", "char_quinn_003"]
+
+        llm_response = {
+            "narrative_text": "I help with repairs.",
+            "task_type": "lasers",
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act
+            await character_agent.perform_action(
+                directive, scene_context, valid_character_ids=valid_character_ids
+            )
+
+            # Assert - check prompt includes valid character IDs
+            call_args = mock_call.call_args
+            user_prompt = call_args[0][1]
+
+            assert "VALID CHARACTERS IN YOUR PARTY:" in user_prompt
+            assert "char_kai_004" in user_prompt
+            assert "char_quinn_003" in user_prompt
+            assert "is_helping" in user_prompt.lower()
+            assert "party member" in user_prompt.lower()
+            assert "NOT NPCs" in user_prompt or "not npc" in user_prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_prompt_shows_none_specified_when_no_valid_ids(
+        self, character_agent, mock_openai_client
+    ):
+        """Test that the prompt shows (None specified) when valid_character_ids is empty or None"""
+        # Arrange
+        directive = Directive(
+            from_player="agent_alex_001",
+            to_character="char_zara_001",
+            instruction="Do something",
+        )
+        scene_context = "Scene."
+
+        llm_response = {
+            "narrative_text": "I do something.",
+            "task_type": "lasers",
+        }
+
+        # Mock the LLM client
+        with patch.object(
+            character_agent._llm_client, 'call', new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = json.dumps(llm_response)
+
+            # Act - call with None
+            await character_agent.perform_action(directive, scene_context, valid_character_ids=None)
+
+            # Assert
+            call_args = mock_call.call_args
+            user_prompt = call_args[0][1]
+
+            assert "VALID CHARACTERS IN YOUR PARTY:" in user_prompt
+            assert "(None specified)" in user_prompt
