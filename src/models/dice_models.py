@@ -23,7 +23,7 @@ class LasersFeelingRollResult(BaseModel):
     - Feelings task: roll > character_number to succeed
     - Exact match: LASER FEELINGS (success + complication)
 
-    Base roll is 1d6; +1d6 if prepared; +1d6 if expert (max 3d6)
+    Base roll is 1d6; +1d6 if prepared; +1d6 if expert; +1d6 if helping (max 3d6)
     Total successes determine outcome: 0=failure, 1=barely, 2=success, 3=critical
     """
 
@@ -43,6 +43,10 @@ class LasersFeelingRollResult(BaseModel):
     is_expert: bool = Field(
         default=False,
         description="Whether character is expert (+1d6)"
+    )
+    is_helping: bool = Field(
+        default=False,
+        description="Whether character is being helped by another (+1d6)"
     )
     individual_rolls: list[int] = Field(
         description="Individual d6 results (1-3 dice)"

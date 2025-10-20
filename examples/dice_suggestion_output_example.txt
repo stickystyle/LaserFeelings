@@ -1,0 +1,71 @@
+Example: CLI Dice Suggestion Display
+======================================
+
+This shows how dice roll suggestions will appear in the DM CLI when characters perform actions.
+
+Example 1: Simple Lasers Task
+------------------------------
+
+Zara-7:
+  Player Directive: Repair the fuel cells to restore ship power
+  Character Performance: I approach the fuel cell bay, running my diagnostic scanner over the depleted cells. "Captain, I can restore partial power if I bypass the damaged coupling."
+  Dice Roll Suggestion:
+  - Task Type: Lasers (logic/tech)
+  - Suggested Roll: 1d6 Lasers
+
+
+Example 2: Prepared + Expert Character
+---------------------------------------
+
+Zara-7:
+  Player Directive: Repair the fuel cells to restore ship power
+  Character Performance: Having studied the schematics during our last jump, I quickly identify the fault. As the ship's engineer, this repair is routine. "I'll have us back online in minutes."
+  Dice Roll Suggestion:
+  - Task Type: Lasers (logic/tech)
+  - Prepared: ✓ "I studied the ship's schematics during our last jump"
+  - Expert: ✓ "As the ship's Engineer, fuel cell repair is my specialty"
+  - Suggested Roll: 3d6 Lasers
+
+
+Example 3: Feelings Task with Preparation
+------------------------------------------
+
+Quinn:
+  Player Directive: Convince the alien diplomat to grant us landing clearance
+  Character Performance: I adjust my translator and recall our research on their culture. "Ambassador, our ship needs urgent repairs. We mean no intrusion—only seek your people's renowned hospitality."
+  Dice Roll Suggestion:
+  - Task Type: Feelings (social/emotion)
+  - Prepared: ✓ "I researched their diplomatic protocols before arrival"
+  - Suggested Roll: 2d6 Feelings
+
+
+Example 4: Helping Another Character
+-------------------------------------
+
+Marcus:
+  Player Directive: Provide covering fire while Zara makes repairs
+  Character Performance: I position myself at the corridor entrance, pulse rifle ready. "Zara, you've got thirty seconds. I'll keep them off your back!"
+  Dice Roll Suggestion:
+  - Task Type: Lasers (logic/tech)
+  - Helping Zara-7: ✓ "Providing suppressing fire to protect the engineer"
+  - Expert: ✓ "As the ship's Soldier, tactical combat is my expertise"
+  - Suggested Roll: 3d6 Lasers
+
+
+Example 5: No Dice Roll (Narrative Only)
+-----------------------------------------
+
+Zara-7:
+  Player Directive: Express concern about the ship's condition
+  Character Performance: I look up from my scanner, synthetic brow furrowed. "Captain, these readings worry me. We're running on borrowed time."
+
+(No dice suggestion displayed - this is pure roleplay with no mechanical task)
+
+
+Notes:
+------
+- The DM sees all justifications and can approve/deny the suggested bonus dice
+- Maximum 3d6 total (1 base + up to 2 bonuses)
+- If helping another character, their name is displayed (resolved from character_id)
+- The checkmark (✓) indicates a bonus is being requested
+- DM still has final say on whether to accept the suggestions

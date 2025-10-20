@@ -143,7 +143,15 @@ Player directive:
 
 Perform this action IN CHARACTER as JSON:
 {{
-  "narrative_text": "Your complete action as flowing narrative prose"
+  "narrative_text": "Your complete action as flowing narrative prose",
+  "task_type": "lasers" or "feelings" or null,
+  "is_prepared": true or false,
+  "prepared_justification": "Why you're prepared (if is_prepared=true)",
+  "is_expert": true or false,
+  "expert_justification": "Why you're an expert (if is_expert=true)",
+  "is_helping": true or false,
+  "helping_character_id": "char_id" or null,
+  "help_justification": "How you're helping (if is_helping=true)"
 }}
 
 Write your action as cohesive narrative that combines:
@@ -153,11 +161,41 @@ Write your action as cohesive narrative that combines:
 
 Example: "I tilt my head, processing the data. 'Fascinating,' I say quietly, reaching for my scanner. I attempt to interface with the console's diagnostic port."
 
+DICE ROLL SUGGESTIONS:
+If your action might require a dice roll, provide these fields to help the DM:
+
+- "task_type": Set to "lasers" for technical/logical/analytical tasks, "feelings" for social/emotional/intuitive tasks, or null if no roll needed
+- "is_prepared": Set to true ONLY if you can justify preparation from prior context (studied, gathered intel, brought specific tools)
+- "prepared_justification": REQUIRED if is_prepared=true. Reference specific prior actions, study, or preparation (e.g., "I studied the ship's fuel system during our last jump")
+- "is_expert": Set to true ONLY if this task directly matches your Role (e.g., Engineer repairing systems) or exceptional training mentioned in your character sheet
+- "expert_justification": REQUIRED if is_expert=true. Reference your Role, Style, or specific expertise (e.g., "As the ship's Engineer, fuel cell repair is my specialty")
+- "is_helping": Set to true ONLY if you are actively assisting another specific character with THEIR action (not doing your own thing)
+- "helping_character_id": REQUIRED if is_helping=true. Specify which character you're helping (e.g., "char_zara_001")
+- "help_justification": REQUIRED if is_helping=true. Explain HOW you're helping (e.g., "I'm providing covering fire while they hack the terminal")
+
+IMPORTANT - Be honest about modifiers:
+- Don't claim is_prepared unless you can cite specific prior preparation from the scene context
+- Don't claim is_expert unless it truly matches your Role or exceptional training
+- Don't claim is_helping unless you're assisting another character's action
+- Always provide justifications when claiming prepared/expert/helping bonuses
+- When in doubt, leave the modifier as false - the DM will reward genuine preparation and expertise
+
+Example with dice roll suggestions:
+{{
+  "narrative_text": "I carefully examine the fuel cell wiring, cross-referencing the diagnostic readout with the schematics I memorized. 'The problem is in junction seven,' I mutter, reaching for my precision tools. I attempt to bypass the faulty relay.",
+  "task_type": "lasers",
+  "is_prepared": true,
+  "prepared_justification": "I studied the ship's fuel system schematics during our last hyperspace jump",
+  "is_expert": true,
+  "expert_justification": "As the ship's Engineer, fuel cell repair and electrical systems are my core specialty"
+}}
+
 REMEMBER:
 - Use "I attempt to...", "I try to...", "I aim to..." for actions
 - NEVER say "I successfully...", "I hit...", "I kill..."
 - Express your intent, let the DM narrate what actually happens
 - Write as flowing prose, not separate sections
+- Be honest about dice roll modifiers - don't claim bonuses you can't justify
 """
 
         try:
@@ -173,6 +211,14 @@ REMEMBER:
             action = Action(
                 character_id=self.character_id,
                 narrative_text=data.get("narrative_text", ""),
+                task_type=data.get("task_type"),
+                is_prepared=data.get("is_prepared", False),
+                prepared_justification=data.get("prepared_justification"),
+                is_expert=data.get("is_expert", False),
+                expert_justification=data.get("expert_justification"),
+                is_helping=data.get("is_helping", False),
+                helping_character_id=data.get("helping_character_id"),
+                help_justification=data.get("help_justification"),
             )
 
             # Validate narrative_text is present

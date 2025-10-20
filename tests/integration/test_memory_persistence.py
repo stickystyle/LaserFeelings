@@ -13,6 +13,8 @@ from src.orchestrator.turn_manager import TurnManager
 
 # Core models
 from src.models.personality import CharacterRole, CharacterSheet, CharacterStyle, PlayerPersonality
+# Test helpers
+from tests.conftest import make_action_dict
 
 # --- Test Fixtures ---
 
@@ -135,7 +137,10 @@ class TestMemoryStorageDuringTurn:
                 "The merchant Galvin greets you warmly at his stall in the marketplace."
             ),
             "character_actions": {
-                "char_001": "I approach Galvin and ask about rare artifacts."
+                "char_001": make_action_dict(
+                    "char_001",
+                    "I approach Galvin and ask about rare artifacts."
+                )
             },
             "dm_outcome": "Galvin tells you about a hidden temple in the desert.",
             "character_reactions": {
@@ -177,7 +182,10 @@ class TestMemoryStorageDuringTurn:
             "turn_number": 3,
             "dm_narration": "You meet the android engineer Kai-7 at the spaceport hangar.",
             "character_actions": {
-                "char_001": "I introduce myself and ask about ship repairs."
+                "char_001": make_action_dict(
+                    "char_001",
+                    "I introduce myself and ask about ship repairs."
+                )
             },
             "dm_outcome": "Kai-7 examines your ship with expert precision.",
             "character_reactions": {
@@ -215,7 +223,12 @@ class TestMemoryStorageDuringTurn:
             "session_number": 3,
             "turn_number": 12,
             "dm_narration": "The cave entrance looms before you.",
-            "character_actions": {"char_001": "I light a torch and peer inside."},
+            "character_actions": {
+                "char_001": make_action_dict(
+                    "char_001",
+                    "I light a torch and peer inside."
+                )
+            },
             "dm_outcome": "You see ancient markings on the walls.",
             "character_reactions": {"char_001": "Fascinating! These symbols are Pre-Collapse era!"}
         }
@@ -257,7 +270,9 @@ class TestMemoryRetrievalInSubsequentTurns:
             "session_number": 1,
             "turn_number": 1,
             "dm_narration": "Galvin the merchant offers you 50 gold for the quest.",
-            "character_actions": {"char_001": "I accept the quest."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I accept the quest.")
+            },
             "dm_outcome": "Galvin hands you a map and wishes you luck.",
             "character_reactions": {"char_001": "I thank him and study the map."}
         }
@@ -383,7 +398,9 @@ class TestSessionBoundaryConsolidation:
                 "session_number": 2,
                 "turn_number": i,
                 "dm_narration": f"Turn {i} narration",
-                "character_actions": {"char_001": f"Action {i}"},
+                "character_actions": {
+                    "char_001": make_action_dict("char_001", f"Action {i}")
+                },
                 "dm_outcome": f"Outcome {i}",
                 "character_reactions": {"char_001": f"Reaction {i}"}
             }
@@ -470,7 +487,9 @@ class TestEntityRelationshipTracking:
             "session_number": 1,
             "turn_number": 1,
             "dm_narration": "You meet the merchant Galvin at his stall in the busy marketplace.",
-            "character_actions": {"char_001": "I greet Galvin."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I greet Galvin.")
+            },
             "dm_outcome": "Galvin welcomes you warmly.",
             "character_reactions": {"char_001": "I smile and browse his wares."}
         }
@@ -482,7 +501,9 @@ class TestEntityRelationshipTracking:
             "session_number": 1,
             "turn_number": 2,
             "dm_narration": "Galvin leans in and whispers about a hidden temple in the mountains.",
-            "character_actions": {"char_001": "I listen intently."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I listen intently.")
+            },
             "dm_outcome": "He provides rough directions to the temple.",
             "character_reactions": {"char_001": "This could be exactly what I'm looking for!"}
         }
@@ -521,7 +542,9 @@ class TestEntityRelationshipTracking:
             "session_number": 1,
             "turn_number": 1,
             "dm_narration": "A guard eyes you suspiciously.",
-            "character_actions": {"char_001": "I nod respectfully."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I nod respectfully.")
+            },
             "dm_outcome": "The guard grunts and lets you pass.",
             "character_reactions": {"char_001": "I proceed cautiously."}
         }
@@ -533,7 +556,9 @@ class TestEntityRelationshipTracking:
             "session_number": 3,
             "turn_number": 8,
             "dm_narration": "The same guard recognizes you and waves.",
-            "character_actions": {"char_001": "I wave back with a smile."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I wave back with a smile.")
+            },
             "dm_outcome": "The guard chats with you about recent events.",
             "character_reactions": {"char_001": "It's good to have an ally here."}
         }
@@ -681,7 +706,9 @@ class TestMemoryConfidenceDecay:
             "session_number": 1,
             "turn_number": 1,
             "dm_narration": "The ancient door bears a warning inscription.",
-            "character_actions": {"char_001": "I examine the inscription."},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", "I examine the inscription.")
+            },
             "dm_outcome": "It reads: 'Beware the guardian within.'",
             "character_reactions": {"char_001": "I make a note of the warning."}
         }

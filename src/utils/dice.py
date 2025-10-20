@@ -204,6 +204,7 @@ def roll_lasers_feelings(
     task_type: str,
     is_prepared: bool = False,
     is_expert: bool = False,
+    is_helping: bool = False,
     gm_question: str | None = None
 ) -> LasersFeelingRollResult:
     """
@@ -213,6 +214,7 @@ def roll_lasers_feelings(
     - Base: 1d6
     - Prepared: +1d6 (2d6 total)
     - Expert: +1d6 (3d6 total if also prepared, 2d6 if not prepared)
+    - Helping: +1d6 (max 3d6 total from all modifiers)
     - Each die compared individually to character_number
     - LASERS task: die < number = success, die == number = LASER FEELINGS
     - FEELINGS task: die > number = success, die == number = LASER FEELINGS
@@ -228,6 +230,7 @@ def roll_lasers_feelings(
         task_type: "lasers" or "feelings"
         is_prepared: Whether character was prepared (+1d6)
         is_expert: Whether character is expert (+1d6)
+        is_helping: Whether character is being helped by another (+1d6)
         gm_question: Optional question to ask GM if LASER FEELINGS occurs
 
     Returns:
@@ -258,12 +261,15 @@ def roll_lasers_feelings(
             f"Task type must be 'lasers' or 'feelings', got '{task_type}'"
         )
 
-    # Determine number of dice
+    # Determine number of dice (max 3d6)
     dice_count = 1  # Base
     if is_prepared:
         dice_count += 1
     if is_expert:
         dice_count += 1
+    if is_helping:
+        dice_count += 1
+    dice_count = min(dice_count, 3)  # Cap at 3 dice
 
     # Roll all dice
     individual_rolls = [roll_d6() for _ in range(dice_count)]
@@ -304,6 +310,7 @@ def roll_lasers_feelings(
         task_type=task_type,
         is_prepared=is_prepared,
         is_expert=is_expert,
+        is_helping=is_helping,
         individual_rolls=individual_rolls,
         die_successes=die_successes,
         laser_feelings_indices=laser_feelings_indices,

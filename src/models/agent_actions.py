@@ -2,8 +2,9 @@
 # ABOUTME: Defines the contract between BasePersona (player) and Character (roleplay) layers.
 
 from enum import Enum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Intent(BaseModel):
@@ -59,6 +60,61 @@ class Action(BaseModel):
     narrative_text: str = Field(
         description="Complete action as flowing narrative combining intent, dialogue, and mannerisms"
     )
+
+    # Dice roll suggestion fields
+    task_type: Literal["lasers", "feelings"] | None = Field(
+        default=None,
+        description="Suggested task classification: 'lasers' (logic/tech) or 'feelings' (social/emotion)"
+    )
+    is_prepared: bool = Field(
+        default=False,
+        description="Whether character is prepared for this task (requests +1d6 bonus dice from DM)"
+    )
+    prepared_justification: str | None = Field(
+        default=None,
+        description="Explanation of why character is prepared (e.g., gathered intel, brought tools)"
+    )
+    is_expert: bool = Field(
+        default=False,
+        description="Whether character is expert at this task (requests +1d6 bonus dice from DM)"
+    )
+    expert_justification: str | None = Field(
+        default=None,
+        description="Explanation of why character is expert (e.g., extensive training, natural talent)"
+    )
+    is_helping: bool = Field(
+        default=False,
+        description="Whether character is helping another character (requests +1d6 bonus dice from DM for helped character)"
+    )
+    helping_character_id: str | None = Field(
+        default=None,
+        pattern=r"^char_[a-z0-9_]+$",
+        description="Character ID of the character being helped (if is_helping=True)"
+    )
+    help_justification: str | None = Field(
+        default=None,
+        description="Explanation of how character is helping (e.g., providing cover fire, technical assistance)"
+    )
+
+    @model_validator(mode="after")
+    def validate_justification_consistency(self) -> "Action":
+        """Ensure justifications are provided when corresponding flags are True"""
+        if self.is_prepared and not self.prepared_justification:
+            raise ValueError("prepared_justification is required when is_prepared=True")
+
+        if self.is_expert and not self.expert_justification:
+            raise ValueError("expert_justification is required when is_expert=True")
+
+        if self.is_helping:
+            if not self.helping_character_id:
+                raise ValueError("helping_character_id is required when is_helping=True")
+            if not self.help_justification:
+                raise ValueError("help_justification is required when is_helping=True")
+            # Prevent characters from helping themselves
+            if self.helping_character_id == self.character_id:
+                raise ValueError("Characters cannot help themselves (helping_character_id cannot equal character_id)")
+
+        return self
 
 
 class Reaction(BaseModel):

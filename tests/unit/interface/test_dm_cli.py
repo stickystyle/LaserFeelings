@@ -130,11 +130,14 @@ class TestDMCommandParser:
             parser.parse("/roll xyz")
 
     def test_parse_roll_missing_notation(self):
-        """Test that roll without notation raises error"""
+        """Test that roll without notation is allowed (uses character suggestion)"""
         parser = DMCommandParser()
 
-        with pytest.raises(InvalidCommandError, match="Roll command requires dice notation"):
-            parser.parse("/roll")
+        # /roll without notation should now be valid (uses character's suggestion)
+        parsed = parser.parse("/roll")
+        assert parsed.command_type == DMCommandType.ROLL
+        assert parsed.args == {}  # Empty args means use character suggestion
+        assert parsed.raw_input == "/roll"
 
 
 # ============================================================================
@@ -315,6 +318,165 @@ class TestCLIFormatter:
 
         assert "DM" in output
         assert "success" in output.lower() or "fail" in output.lower()
+
+    def test_format_dice_suggestion_no_task_type(self):
+        """Test that no dice suggestion is returned when task_type is None"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I walk to the door",
+            "task_type": None
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+        assert output is None
+
+    def test_format_dice_suggestion_lasers_task(self):
+        """Test formatting dice suggestion for Lasers task"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I repair the fuel cells",
+            "task_type": "lasers",
+            "is_prepared": False,
+            "is_expert": False,
+            "is_helping": False
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+
+        assert output is not None
+        assert "Task Type: Lasers (logic/tech)" in output
+        assert "Suggested Roll: 1d6 Lasers" in output
+
+    def test_format_dice_suggestion_feelings_task(self):
+        """Test formatting dice suggestion for Feelings task"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I persuade the captain",
+            "task_type": "feelings",
+            "is_prepared": False,
+            "is_expert": False,
+            "is_helping": False
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+
+        assert output is not None
+        assert "Task Type: Feelings (social/emotion)" in output
+        assert "Suggested Roll: 1d6 Feelings" in output
+
+    def test_format_dice_suggestion_with_prepared(self):
+        """Test dice suggestion with prepared bonus"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I repair the fuel cells",
+            "task_type": "lasers",
+            "is_prepared": True,
+            "prepared_justification": "I studied the schematics during our last jump",
+            "is_expert": False,
+            "is_helping": False
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+
+        assert output is not None
+        assert "Prepared: ✓" in output
+        assert "I studied the schematics during our last jump" in output
+        assert "Suggested Roll: 2d6 Lasers" in output
+
+    def test_format_dice_suggestion_with_expert(self):
+        """Test dice suggestion with expert bonus"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I repair the fuel cells",
+            "task_type": "lasers",
+            "is_prepared": False,
+            "is_expert": True,
+            "expert_justification": "As the ship's Engineer, fuel cell repair is my specialty",
+            "is_helping": False
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+
+        assert output is not None
+        assert "Expert: ✓" in output
+        assert "As the ship's Engineer, fuel cell repair is my specialty" in output
+        assert "Suggested Roll: 2d6 Lasers" in output
+
+    def test_format_dice_suggestion_with_helping(self):
+        """Test dice suggestion with helping bonus"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I provide cover fire",
+            "task_type": "lasers",
+            "is_prepared": False,
+            "is_expert": False,
+            "is_helping": True,
+            "helping_character_id": "char_jordan_002",
+            "help_justification": "I'm suppressing enemy positions while Jordan advances"
+        }
+
+        # Test with character name resolver
+        def resolver(char_id):
+            return {"char_jordan_002": "Jordan"}.get(char_id, char_id)
+
+        output = formatter.format_dice_suggestion(action_dict, resolver)
+
+        assert output is not None
+        assert "Helping Jordan: ✓" in output
+        assert "I'm suppressing enemy positions while Jordan advances" in output
+        assert "Suggested Roll: 2d6 Lasers" in output
+
+    def test_format_dice_suggestion_all_bonuses(self):
+        """Test dice suggestion with all bonuses (max 3d6)"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "I repair the fuel cells while coordinating with Jordan",
+            "task_type": "lasers",
+            "is_prepared": True,
+            "prepared_justification": "I gathered all the necessary tools",
+            "is_expert": True,
+            "expert_justification": "This is my area of expertise",
+            "is_helping": True,
+            "helping_character_id": "char_jordan_002",
+            "help_justification": "Jordan is assisting with the diagnostics"
+        }
+
+        output = formatter.format_dice_suggestion(action_dict)
+
+        assert output is not None
+        assert "Prepared: ✓" in output
+        assert "Expert: ✓" in output
+        assert "Helping" in output
+        # Should cap at 3d6
+        assert "Suggested Roll: 3d6 Lasers" in output
+
+    def test_format_character_action_with_directive_includes_dice_suggestion(self):
+        """Test that format_character_action_with_directive includes dice suggestions"""
+        formatter = CLIFormatter()
+        action_dict = {
+            "narrative_text": "Zara-7 approaches the fuel cell bay",
+            "task_type": "lasers",
+            "is_prepared": True,
+            "prepared_justification": "I studied the ship's schematics",
+            "is_expert": True,
+            "expert_justification": "I'm the ship's Engineer",
+            "is_helping": False
+        }
+
+        output = formatter.format_character_action_with_directive(
+            character_name="Zara-7",
+            directive_text="Repair the fuel cells",
+            action_dict=action_dict
+        )
+
+        assert "Zara-7:" in output
+        assert "Player Directive: Repair the fuel cells" in output
+        assert "Character Performance: Zara-7 approaches the fuel cell bay" in output
+        assert "Dice Roll Suggestion:" in output
+        assert "Task Type: Lasers (logic/tech)" in output
+        assert "Prepared: ✓" in output
+        assert "Expert: ✓" in output
+        assert "Suggested Roll: 3d6 Lasers" in output
 
 
 # ============================================================================
@@ -585,7 +747,18 @@ class TestDMCLIIntegration:
             "turn_number": 1,
             "phase_completed": GamePhase.MEMORY_STORAGE.value,
             "character_actions": {
-                "char_001": "I attempt to dock with the station"
+                "char_001": {
+                    "character_id": "char_001",
+                    "narrative_text": "I attempt to dock with the station",
+                    "task_type": None,
+                    "is_prepared": False,
+                    "prepared_justification": None,
+                    "is_expert": False,
+                    "expert_justification": None,
+                    "is_helping": False,
+                    "helping_character_id": None,
+                    "help_justification": None
+                }
             }
         }
 
@@ -607,3 +780,351 @@ class TestDMCLIIntegration:
 
         assert result["success"] is True
         assert result["should_exit"] is True
+
+
+# ============================================================================
+# Character Suggested Roll Tests
+# ============================================================================
+
+
+class TestCharacterSuggestedRoll:
+    """Test /roll without args (uses character's dice suggestion)"""
+
+    def test_execute_character_suggested_roll_success(self):
+        """Test executing character suggested roll with valid state"""
+        cli = DMCommandLineInterface()
+
+        # Mock turn state with character actions
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": True,
+                    "is_expert": False,
+                    "is_helping": False
+                }
+            }
+        }
+
+        # Mock character config (Zara-7 has number 2)
+        cli._character_configs = {
+            "char_zara_001": {
+                "character_id": "char_zara_001",
+                "name": "Zara-7",
+                "number": 2
+            }
+        }
+        cli._character_names = {"char_zara_001": "Zara-7"}
+
+        # Execute suggested roll
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is True
+        assert "roll_result" in result
+        roll_result = result["roll_result"]
+
+        # Verify roll parameters
+        assert roll_result.character_number == 2
+        assert roll_result.task_type == "lasers"
+        assert roll_result.is_prepared is True
+        assert roll_result.dice_count == 2  # 1 base + 1 prepared
+
+    def test_execute_character_suggested_roll_no_turn_state(self):
+        """Test error when no turn state available"""
+        cli = DMCommandLineInterface()
+        cli._current_turn_result = None
+
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is False
+        assert "No turn state available" in result["error"]
+
+    def test_execute_character_suggested_roll_no_character_actions(self):
+        """Test error when no character actions in turn state"""
+        cli = DMCommandLineInterface()
+        cli._current_turn_result = {"character_actions": {}}
+
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is False
+        assert "No character actions available" in result["error"]
+
+    def test_execute_character_suggested_roll_no_task_type(self):
+        """Test error when action has no task_type (no dice needed)"""
+        cli = DMCommandLineInterface()
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": None  # No dice roll needed
+                }
+            }
+        }
+
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is False
+        assert "No dice roll suggestion available" in result["error"]
+
+    def test_execute_character_suggested_roll_missing_character_config(self):
+        """Test error when character config not found"""
+        cli = DMCommandLineInterface()
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_unknown_999": {
+                    "task_type": "lasers"
+                }
+            }
+        }
+        cli._character_configs = {}  # Empty configs
+
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is False
+        assert "Character config not found" in result["error"]
+
+    def test_execute_character_suggested_roll_with_all_bonuses(self):
+        """Test roll with prepared + expert + helping (max dice)"""
+        cli = DMCommandLineInterface()
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "feelings",
+                    "is_prepared": True,
+                    "is_expert": True,
+                    "is_helping": True
+                }
+            }
+        }
+        cli._character_configs = {
+            "char_zara_001": {
+                "character_id": "char_zara_001",
+                "name": "Zara-7",
+                "number": 2
+            }
+        }
+        cli._character_names = {"char_zara_001": "Zara-7"}
+
+        result = cli._execute_character_suggested_roll()
+
+        assert result["success"] is True
+        roll_result = result["roll_result"]
+
+        # Should roll 3d6 (1 base + prepared + expert)
+        # Note: is_helping is combined with is_prepared in current implementation
+        assert roll_result.dice_count == 3
+        assert roll_result.task_type == "feelings"
+
+    def test_display_lasers_feelings_result(self, capsys):
+        """Test formatted display of Lasers & Feelings roll result"""
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+        from datetime import datetime, UTC
+
+        cli = DMCommandLineInterface()
+
+        # Create mock roll result
+        roll_result = LasersFeelingRollResult(
+            character_number=3,
+            task_type="lasers",
+            is_prepared=True,
+            is_expert=False,
+            individual_rolls=[2, 5],
+            die_successes=[True, False],
+            laser_feelings_indices=[],
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        # Display result
+        cli._display_lasers_feelings_result(roll_result)
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify output contains expected elements
+        assert "Lasers & Feelings Roll" in captured.out
+        assert "2d6 Lasers" in captured.out
+        assert "Character Number: 3" in captured.out
+        assert "Individual Rolls: [2, 5]" in captured.out
+        assert "Successes: 1/2" in captured.out
+        assert "Outcome: BARELY" in captured.out
+
+    def test_display_lasers_feelings_result_with_laser_feelings(self, capsys):
+        """Test display when LASER FEELINGS occurs"""
+        from src.models.dice_models import LasersFeelingRollResult, RollOutcome
+        from datetime import datetime, UTC
+
+        cli = DMCommandLineInterface()
+
+        # Create roll with LASER FEELINGS (die matched character number)
+        roll_result = LasersFeelingRollResult(
+            character_number=4,
+            task_type="feelings",
+            is_prepared=False,
+            is_expert=False,
+            individual_rolls=[4],
+            die_successes=[True],
+            laser_feelings_indices=[0],  # First die is LASER FEELINGS
+            total_successes=1,
+            outcome=RollOutcome.BARELY,
+            timestamp=datetime.now(UTC)
+        )
+
+        cli._display_lasers_feelings_result(roll_result)
+        captured = capsys.readouterr()
+
+        # Verify LASER FEELINGS is displayed
+        assert "LASER FEELINGS on die #1!" in captured.out
+
+
+# ============================================================================
+# Agent-to-Character Mapping Tests
+# ============================================================================
+
+
+class TestAgentToCharacterMapping:
+    """Test agent-to-character mapping functionality"""
+
+    def test_load_agent_to_character_mapping_success(self, tmp_path, monkeypatch):
+        """Test successful loading of agent-to-character mapping from config files"""
+        import json
+        from pathlib import Path
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Verify mapping was loaded
+        assert "agent_alex_001" in cli._agent_to_character
+        assert cli._agent_to_character["agent_alex_001"] == "char_zara_001"
+
+    def test_load_agent_to_character_mapping_multiple_characters(self, tmp_path, monkeypatch):
+        """Test loading multiple agent-to-character mappings"""
+        import json
+        from pathlib import Path
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create multiple test character config files
+        char_configs = [
+            {
+                "character_id": "char_zara_001",
+                "agent_id": "agent_alex_001",
+                "name": "Zara-7",
+                "number": 2
+            },
+            {
+                "character_id": "char_nova_002",
+                "agent_id": "agent_sam_002",
+                "name": "Nova",
+                "number": 4
+            }
+        ]
+
+        for config in char_configs:
+            config_file = config_dir / f"{config['character_id']}_character.json"
+            with open(config_file, "w") as f:
+                json.dump(config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Verify both mappings were loaded
+        assert len(cli._agent_to_character) == 2
+        assert cli._agent_to_character["agent_alex_001"] == "char_zara_001"
+        assert cli._agent_to_character["agent_sam_002"] == "char_nova_002"
+
+    def test_load_agent_to_character_mapping_directory_not_found(self, tmp_path, monkeypatch):
+        """Test handling when config directory doesn't exist"""
+        # Change to tmp_path where there's no config/personalities directory
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Verify empty mapping when directory not found
+        assert len(cli._agent_to_character) == 0
+
+    def test_load_agent_to_character_mapping_invalid_json(self, tmp_path, monkeypatch):
+        """Test handling when config file has invalid JSON"""
+        import json
+        from pathlib import Path
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create invalid JSON file
+        config_file = config_dir / "char_invalid_001_character.json"
+        with open(config_file, "w") as f:
+            f.write("invalid json {")
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Verify mapping is empty (invalid file was skipped)
+        assert len(cli._agent_to_character) == 0
+
+    def test_execute_character_suggested_roll_uses_correct_character_id(self, tmp_path, monkeypatch):
+        """Test that character suggested roll uses character_id from turn state correctly"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+
+        # Set up turn state with character_id that matches config
+        cli._current_turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "task_type": "lasers",
+                    "is_prepared": True,
+                    "is_expert": False,
+                    "is_helping": False
+                }
+            }
+        }
+
+        # Execute roll
+        result = cli._execute_character_suggested_roll()
+
+        # Should succeed because character_id matches config
+        assert result["success"] is True
+        assert "roll_result" in result

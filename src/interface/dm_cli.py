@@ -3,6 +3,7 @@
 
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -10,11 +11,13 @@ from loguru import logger
 from redis import Redis
 
 from src.config.settings import get_settings
+from src.models.dice_models import LasersFeelingRollResult
 from src.models.game_state import GamePhase
 from src.orchestration.message_router import MessageRouter
 from src.orchestration.state_machine import TurnOrchestrator
-from src.utils.dice import parse_dice_notation, roll_dice
+from src.utils.dice import parse_dice_notation, roll_dice, roll_lasers_feelings
 from src.utils.logging import setup_logging
+from src.utils.redis_cleanup import cleanup_redis_for_new_session
 
 # ============================================================================
 # Custom Exceptions
@@ -130,8 +133,15 @@ class DMCommandParser:
 
         if cmd_type == DMCommandType.ROLL:
             notation = match.group(1)
+
+            # Allow empty notation for character-suggested roll
             if not notation or not notation.strip():
-                raise InvalidCommandError("Roll command requires dice notation (e.g., /roll 2d6+3)")
+                return ParsedCommand(
+                    command_type=cmd_type,
+                    args={},  # No notation = use character's suggestion
+                    raw_input=raw_input
+                )
+
             notation = notation.strip()
 
             # Validate dice notation
@@ -336,11 +346,80 @@ class CLIFormatter:
 
         return "\n".join(lines)
 
+    def format_dice_suggestion(
+        self,
+        action_dict: dict,
+        character_name_resolver: Callable[[str], str] | None = None
+    ) -> str | None:
+        """
+        Format dice roll suggestion with justifications for DM review.
+
+        Args:
+            action_dict: ActionDict containing roll suggestions
+            character_name_resolver: Optional function to resolve character_id to name
+
+        Returns:
+            Formatted string with roll suggestions, or None if no suggestions
+        """
+        task_type = action_dict.get("task_type")
+
+        # Return None if no dice suggestion
+        if task_type is None:
+            return None
+
+        lines = ["  Dice Roll Suggestion:"]
+
+        # Display task type
+        task_type_display = task_type.capitalize()
+        task_description = (
+            "logic/tech" if task_type.lower() == "lasers" else "social/emotion"
+        )
+        lines.append(f"  - Task Type: {task_type_display} ({task_description})")
+
+        # Track bonus dice count
+        bonus_dice = 0
+
+        # Display prepared flag + justification
+        is_prepared = action_dict.get("is_prepared", False)
+        prepared_just = action_dict.get("prepared_justification", "")
+        if is_prepared:
+            bonus_dice += 1
+            lines.append(f"  - Prepared: {self.SUCCESS_MARKER} \"{prepared_just}\"")
+
+        # Display expert flag + justification
+        is_expert = action_dict.get("is_expert", False)
+        expert_just = action_dict.get("expert_justification", "")
+        if is_expert:
+            bonus_dice += 1
+            lines.append(f"  - Expert: {self.SUCCESS_MARKER} \"{expert_just}\"")
+
+        # Display helping flag + target + justification
+        is_helping = action_dict.get("is_helping", False)
+        if is_helping:
+            bonus_dice += 1
+            helping_char_id = action_dict.get("helping_character_id", "unknown")
+            help_just = action_dict.get("help_justification", "")
+
+            # Resolve character name if resolver provided
+            helping_char_name = helping_char_id
+            if character_name_resolver:
+                helping_char_name = character_name_resolver(helping_char_id)
+
+            lines.append(f"  - Helping {helping_char_name}: {self.SUCCESS_MARKER} \"{help_just}\"")
+
+        # Calculate suggested dice count (1 base + bonuses, max 3)
+        total_dice = min(1 + bonus_dice, 3)
+        roll_formula = f"{total_dice}d6 {task_type_display}"
+        lines.append(f"  - Suggested Roll: {roll_formula}")
+
+        return "\n".join(lines)
+
     def format_character_action_with_directive(
         self,
         character_name: str,
         directive_text: str,
-        action_dict: dict
+        action_dict: dict,
+        character_name_resolver: Callable[[str], str] | None = None
     ) -> str:
         """
         Format character action showing both player directive and character performance.
@@ -349,6 +428,7 @@ class CLIFormatter:
             character_name: Human-readable character name (e.g., "Zara-7")
             directive_text: The strategic goal/instruction from the player
             action_dict: The Action model dict with narrative_text field
+            character_name_resolver: Optional function to resolve character_id to name
 
         Returns:
             Formatted string with labeled sections
@@ -358,6 +438,11 @@ class CLIFormatter:
 
         narrative = action_dict.get("narrative_text", "")
         lines.append(f"  Character Performance: {narrative}")
+
+        # Append dice suggestion if present
+        dice_suggestion = self.format_dice_suggestion(action_dict, character_name_resolver)
+        if dice_suggestion:
+            lines.append(dice_suggestion)
 
         return "\n".join(lines)
 
@@ -470,10 +555,15 @@ class DMCommandLineInterface:
         self._campaign_name: str = ""
         self._active_agents: list[dict] = []
         self._should_exit: bool = False
+        # Store current turn state for roll suggestions
+        self._current_turn_result: dict | None = None
 
         # Character ID to name mapping (loaded from config files)
         self._character_names: dict[str, str] = {}
+        self._character_configs: dict[str, dict] = {}  # Map character_id -> full config
+        self._agent_to_character: dict[str, str] = {}  # Map agent_id -> character_id
         self._load_character_names()
+        self._load_agent_to_character_mapping()
 
     def handle_command(self, parsed: ParsedCommand) -> dict:
         """
@@ -526,7 +616,14 @@ class DMCommandLineInterface:
     # T065: Roll command handler
     def _handle_roll(self, parsed: ParsedCommand) -> dict:
         """Handle dice roll command"""
-        notation = parsed.args["notation"]
+        notation = parsed.args.get("notation")
+
+        if not notation:
+            return {
+                "success": False,
+                "error": "Roll command requires dice notation or must be used during adjudication",
+                "error_type": "MissingDiceNotation"
+            }
 
         # Parse and execute dice roll
         try:
@@ -724,6 +821,9 @@ class DMCommandLineInterface:
                             session_number=self._session_number
                         )
 
+                        # Store turn result for roll suggestions
+                        self._current_turn_result = turn_result
+
                         # Handle interrupts - keep prompting DM until turn completes
                         while turn_result.get("awaiting_dm_input"):
                             awaiting_phase = turn_result.get("awaiting_phase")
@@ -737,7 +837,7 @@ class DMCommandLineInterface:
                                 strategic_intents = turn_result.get("strategic_intents", {})
                                 character_actions = turn_result["character_actions"]
 
-                                for char_id, action_text in character_actions.items():
+                                for char_id, action_dict in character_actions.items():
                                     # Get character name
                                     char_name = self._get_character_name(char_id)
 
@@ -755,10 +855,16 @@ class DMCommandLineInterface:
                                             directive_text = str(intent_dict)
                                         break  # For MVP, assume single agent
 
-                                    # Display action with directive
-                                    print(f"\n{char_name}:")
-                                    print(f"  Player Directive: {directive_text}")
-                                    print(f"  Character Performance: {action_text}")
+                                    # Display action with directive using enhanced formatter
+                                    formatted_action = (
+                                        self.formatter.format_character_action_with_directive(
+                                            char_name,
+                                            directive_text,
+                                            action_dict,
+                                            self._get_character_name
+                                        )
+                                    )
+                                    print(formatted_action)
 
                             # Prompt DM based on awaiting phase
                             dm_input_result = self._prompt_for_dm_input_at_phase(awaiting_phase)
@@ -786,7 +892,14 @@ class DMCommandLineInterface:
                         if turn_result.get("character_reactions"):
                             print("\nCharacter Reactions:")
                             character_reactions = turn_result["character_reactions"]
-                            for char_id, reaction_text in character_reactions.items():
+                            for char_id, reaction_dict in character_reactions.items():
+                                # Extract narrative text from Reaction model dict
+                                reaction_text = (
+                                    reaction_dict.get("narrative_text", str(reaction_dict))
+                                    if reaction_dict
+                                    else ""
+                                )
+
                                 # Get character name
                                 char_name = self._get_character_name(char_id)
 
@@ -800,6 +913,7 @@ class DMCommandLineInterface:
                         # Update current phase and increment turn counter
                         self._current_phase = GamePhase(turn_result['phase_completed'])
                         self._turn_number += 1
+                        self._current_turn_result = None  # Clear for next turn
 
                     except Exception as e:
                         error_output = self.formatter.format_error(
@@ -838,7 +952,7 @@ class DMCommandLineInterface:
         Load character configs to build character_id → character_name mapping.
 
         Looks for character config files in config/personalities/ directory.
-        Populates self._character_names dict for use in formatters.
+        Populates self._character_names and self._character_configs dicts.
         """
         import json
         from pathlib import Path
@@ -859,16 +973,51 @@ class DMCommandLineInterface:
 
                         if character_id and character_name:
                             self._character_names[character_id] = character_name
+                            self._character_configs[character_id] = character_config
                             logger.debug(
-                                f"Loaded character name: {character_id} → {character_name}"
+                                f"Loaded character: {character_id} → {character_name}"
                             )
                 except Exception as e:
                     logger.warning(f"Failed to load character config {config_file}: {e}")
 
-            logger.info(f"Loaded {len(self._character_names)} character names from configs")
+            logger.info(f"Loaded {len(self._character_names)} character configs")
 
         except Exception as e:
-            logger.error(f"Failed to load character names: {e}")
+            logger.error(f"Failed to load character configs: {e}")
+
+    def _load_agent_to_character_mapping(self) -> None:
+        """
+        Build mapping from agent_id to character_id from config files.
+
+        Reads character config files and creates a lookup dict to resolve
+        which character belongs to which agent.
+        """
+        import json
+        from pathlib import Path
+
+        try:
+            config_dir = Path("config/personalities")
+            if not config_dir.exists():
+                logger.warning(f"Character config directory not found: {config_dir}")
+                return
+
+            for config_file in config_dir.glob("char_*_character.json"):
+                try:
+                    with open(config_file) as f:
+                        char_config = json.load(f)
+                        agent_id = char_config.get("agent_id")
+                        character_id = char_config.get("character_id")
+
+                        if agent_id and character_id:
+                            self._agent_to_character[agent_id] = character_id
+                            logger.debug(f"Mapped agent {agent_id} → character {character_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to load mapping from {config_file}: {e}")
+
+            logger.info(f"Loaded {len(self._agent_to_character)} agent-to-character mappings")
+
+        except Exception as e:
+            logger.error(f"Failed to load agent-to-character mappings: {e}")
 
     def _get_character_name(self, character_id: str) -> str:
         """
@@ -881,6 +1030,126 @@ class DMCommandLineInterface:
             Character name if found, otherwise character_id
         """
         return self._character_names.get(character_id, character_id)
+
+    def _execute_character_suggested_roll(self) -> dict:
+        """
+        Execute Lasers & Feelings roll using character's suggested parameters.
+
+        Reads action_dict from current turn state, extracts roll modifiers,
+        loads character sheet for character number, and calls roll_lasers_feelings().
+
+        Returns:
+            Dict with success: bool, roll_result: LasersFeelingRollResult or error message
+        """
+        # Validate we have turn state
+        if not self._current_turn_result:
+            return {
+                "success": False,
+                "error": "No turn state available",
+                "suggestion": "Character roll suggestions are only available during adjudication"
+            }
+
+        # Get character actions from turn state
+        character_actions = self._current_turn_result.get("character_actions", {})
+        if not character_actions:
+            return {
+                "success": False,
+                "error": "No character actions available",
+                "suggestion": "Use /roll <dice> to specify a dice roll"
+            }
+
+        # For MVP, assume single character (first in dict)
+        # TODO: Support multi-character adjudication
+        character_id = list(character_actions.keys())[0]
+        action_dict = character_actions[character_id]
+
+        # Extract roll parameters from action_dict
+        task_type = action_dict.get("task_type")
+        if not task_type:
+            return {
+                "success": False,
+                "error": "No dice roll suggestion available",
+                "suggestion": "Use /roll <dice> to specify a dice roll"
+            }
+
+        is_prepared = action_dict.get("is_prepared", False)
+        is_expert = action_dict.get("is_expert", False)
+        is_helping = action_dict.get("is_helping", False)
+
+        # Load character config to get character number
+        character_config = self._character_configs.get(character_id)
+        if not character_config:
+            return {
+                "success": False,
+                "error": f"Character config not found for {character_id}",
+                "suggestion": "Check character configuration files"
+            }
+
+        character_number = character_config.get("number")
+        if not character_number:
+            return {
+                "success": False,
+                "error": f"Character number missing in config for {character_id}",
+                "suggestion": "Check character configuration files"
+            }
+
+        # Calculate dice count for display
+        dice_count = 1
+        dice_count += 1 if is_prepared else 0
+        dice_count += 1 if is_expert else 0
+        dice_count += 1 if is_helping else 0
+        dice_count = min(dice_count, 3)  # Max 3 dice
+
+        # Display using character suggestion
+        character_name = self._get_character_name(character_id)
+        print(f"\nUsing {character_name}'s suggested roll: {dice_count}d6 {task_type.capitalize()}")
+
+        # Execute Lasers & Feelings roll
+        try:
+            roll_result = roll_lasers_feelings(
+                character_number=character_number,
+                task_type=task_type,
+                is_prepared=is_prepared,
+                is_expert=is_expert,
+                is_helping=is_helping
+            )
+
+            return {
+                "success": True,
+                "roll_result": roll_result
+            }
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": f"Roll execution failed: {e}",
+                "suggestion": "Check roll parameters"
+            }
+
+    def _display_lasers_feelings_result(self, roll_result: LasersFeelingRollResult) -> None:
+        """
+        Display Lasers & Feelings roll result in CLI format.
+
+        Args:
+            roll_result: LasersFeelingRollResult from roll_lasers_feelings()
+        """
+        # Build display string
+        rolls_str = ", ".join(str(r) for r in roll_result.individual_rolls)
+        task_type_display = roll_result.task_type.capitalize()
+
+        lines = [
+            f"\n[Lasers & Feelings Roll] {roll_result.dice_count}d6 {task_type_display}",
+            f"  Character Number: {roll_result.character_number}",
+            f"  Individual Rolls: [{rolls_str}]",
+            f"  Successes: {roll_result.total_successes}/{roll_result.dice_count}",
+            f"  Outcome: {roll_result.outcome.value.upper()}"
+        ]
+
+        # Display LASER FEELINGS if any
+        if roll_result.has_laser_feelings:
+            lf_indices = ", ".join(str(i+1) for i in roll_result.laser_feelings_indices)
+            lines.append(f"  LASER FEELINGS on die #{lf_indices}!")
+
+        print("\n".join(lines))
 
     def _display_ooc_summary(self, turn_number: int, router: MessageRouter | None = None) -> None:
         """
@@ -937,11 +1206,11 @@ class DMCommandLineInterface:
     def _get_command_suggestion(self, user_input: str) -> str | None:
         """Get helpful suggestion based on failed command"""
         if "/roll" in user_input.lower():
-            return "Try: /roll 1d20, /roll 2d6+3, or /roll d6"
+            return "Try: /roll (use character's suggestion) or /roll 2d6+3 (DM override)"
         elif any(word in user_input.lower() for word in ["success", "fail", "pass"]):
-            return "Try: success, fail, or /roll <dice>"
+            return "Try: success, fail, or /roll"
         else:
-            return "Available commands: narrate text, /roll <dice>, success, fail, /info, /quit"
+            return "Available commands: narrate text, /roll [dice], success, fail, /info, /quit"
 
     def _prompt_for_dm_input_at_phase(self, awaiting_phase: str) -> dict:
         """
@@ -956,7 +1225,7 @@ class DMCommandLineInterface:
         if awaiting_phase == "dm_adjudication":
             # Prompt for adjudication
             print("\n=== DM Adjudication Required ===")
-            print("Commands: success, fail, or /roll <dice>")
+            print("Commands: success, fail, /roll (use suggestion), or /roll <dice> (override)")
             print(self.formatter.format_awaiting_dm_input(
                 current_phase=GamePhase.DM_ADJUDICATION,
                 expected_command_types=["success", "fail", "/roll"]
@@ -969,7 +1238,7 @@ class DMCommandLineInterface:
                 return {
                     "success": False,
                     "error": "Empty input",
-                    "suggestion": "Use: success, fail, or /roll <dice>"
+                    "suggestion": "Use: success, fail, /roll, or /roll <dice>"
                 }
 
             # Parse command
@@ -979,7 +1248,7 @@ class DMCommandLineInterface:
                 return {
                     "success": False,
                     "error": str(e),
-                    "suggestion": "Use: success, fail, or /roll <dice>"
+                    "suggestion": "Use: success, fail, /roll, or /roll <dice>"
                 }
 
             # Handle based on command type
@@ -1006,37 +1275,59 @@ class DMCommandLineInterface:
                 }
 
             elif parsed.command_type == DMCommandType.ROLL:
-                # Execute the roll
-                notation = parsed.args["notation"]
-                try:
-                    dice_result = roll_dice(notation)
-                    print(self.formatter.format_dice_roll(
-                        notation=dice_result.notation,
-                        individual_rolls=dice_result.individual_rolls,
-                        total=dice_result.total,
-                        modifier=dice_result.modifier
-                    ))
+                # Check if notation was provided (DM override)
+                notation = parsed.args.get("notation")
+
+                if notation:
+                    # DM provided explicit notation - use it
+                    try:
+                        dice_result = roll_dice(notation)
+                        print(self.formatter.format_dice_roll(
+                            notation=dice_result.notation,
+                            individual_rolls=dice_result.individual_rolls,
+                            total=dice_result.total,
+                            modifier=dice_result.modifier
+                        ))
+
+                        return {
+                            "success": True,
+                            "input_type": "adjudication",
+                            "data": {
+                                "needs_dice": True,
+                                "dice_override": dice_result.total
+                            }
+                        }
+                    except ValueError as e:
+                        return {
+                            "success": False,
+                            "error": f"Invalid dice notation: {e}",
+                            "suggestion": "Use format like: /roll 1d6, /roll 2d6+3"
+                        }
+                else:
+                    # No notation - use character's suggested roll
+                    lf_result = self._execute_character_suggested_roll()
+
+                    if not lf_result["success"]:
+                        return lf_result  # Return error
+
+                    # Display Lasers & Feelings roll result
+                    roll_result = lf_result["roll_result"]
+                    self._display_lasers_feelings_result(roll_result)
 
                     return {
                         "success": True,
                         "input_type": "adjudication",
                         "data": {
                             "needs_dice": True,
-                            "dice_override": dice_result.total
+                            "lasers_feelings_result": roll_result.model_dump()
                         }
-                    }
-                except ValueError as e:
-                    return {
-                        "success": False,
-                        "error": f"Invalid dice notation: {e}",
-                        "suggestion": "Use format like: /roll 1d6, /roll 2d6+3"
                     }
 
             else:
                 return {
                     "success": False,
                     "error": f"Invalid command for adjudication: {parsed.command_type}",
-                    "suggestion": "Use: success, fail, or /roll <dice>"
+                    "suggestion": "Use: success, fail, /roll, or /roll <dice>"
                 }
 
         elif awaiting_phase == "dm_outcome":
@@ -1096,13 +1387,21 @@ def main():
         print("Make sure Redis is running via 'docker-compose up -d'")
         sys.exit(1)
 
+    # Clean Redis for fresh session
+    cleanup_result = cleanup_redis_for_new_session(redis_client)
+    if cleanup_result["success"]:
+        print(f"✓ {cleanup_result['message']}")
+    else:
+        print(f"⚠ Warning: {cleanup_result['message']}")
+        print("Continuing with existing Redis data...")
+
     # Initialize orchestrator
     orchestrator = TurnOrchestrator(redis_client)
 
     # Initialize CLI with orchestrator
     cli = DMCommandLineInterface(orchestrator=orchestrator)
     cli._campaign_name = "Voyage of the Raptor"
-    cli._active_agents = ["agent_001"]  # List of agent IDs, not dicts
+    cli._active_agents = ["agent_alex_001"]  # List of agent IDs, not dicts
 
     try:
         cli.run()

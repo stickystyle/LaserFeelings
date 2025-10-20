@@ -8,6 +8,20 @@ from typing import Literal, NotRequired, TypedDict
 from pydantic import BaseModel, Field
 
 
+class ActionDict(TypedDict):
+    """TypedDict representation of Action model for GameState character_actions"""
+    character_id: str
+    narrative_text: str
+    task_type: NotRequired[Literal["lasers", "feelings"] | None]
+    is_prepared: NotRequired[bool]
+    prepared_justification: NotRequired[str | None]
+    is_expert: NotRequired[bool]
+    expert_justification: NotRequired[str | None]
+    is_helping: NotRequired[bool]
+    helping_character_id: NotRequired[str | None]
+    help_justification: NotRequired[str | None]
+
+
 class GamePhase(str, Enum):
     """Turn cycle phases in LangGraph state machine"""
     DM_NARRATION = "dm_narration"
@@ -60,7 +74,7 @@ class GameState(TypedDict):
     consensus_state: NotRequired[Literal["unanimous", "majority", "conflicted", "timeout"]]
 
     # Character layer (roleplay level)
-    character_actions: dict[str, str]  # character_id -> action
+    character_actions: dict[str, ActionDict]  # character_id -> Action model dict
     character_reactions: dict[str, str]  # character_id -> reaction
 
     # Validation state
@@ -71,12 +85,28 @@ class GameState(TypedDict):
     # Memory retrieval
     retrieved_memories: dict[str, list[dict]]  # agent_id -> memory list
 
-    # Dice resolution
+    # Dice resolution - Uses multi-die success counting system
+    # Lasers & Feelings rules: Roll 1d6 per die, each die succeeds independently
+    # - Lasers task: die succeeds if roll < character's number
+    # - Feelings task: die succeeds if roll > character's number
+    # - LASER FEELINGS: exact match on any die (prompts DM question)
     dice_action_character: NotRequired[str]  # Which character is rolling
-    dice_task_type: NotRequired[Literal["lasers", "feelings"]]
-    dice_result: NotRequired[int]
-    dice_success: NotRequired[bool]
-    dice_complication: NotRequired[bool]  # True when exact roll (complication)
+    dice_task_type: NotRequired[Literal["lasers", "feelings"]]  # Task classification
+    dice_count: NotRequired[int]  # Number of dice rolled (1-3: base + prepared + expert)
+    individual_rolls: NotRequired[list[int]]  # Each individual die result (1-6)
+    die_successes: NotRequired[list[bool]]  # Which individual dice succeeded (per-die success)
+    total_successes: NotRequired[int]  # Total count of successful dice
+    laser_feelings_indices: NotRequired[list[int]]  # Indices with exact match (LASER FEELINGS)
+    outcome: NotRequired[Literal["failure", "barely", "success", "critical"]]  # Semantic outcome
+    is_prepared: NotRequired[bool]  # Character was prepared (bonus die granted)
+    is_expert: NotRequired[bool]  # Character is expert (bonus die granted)
+    gm_question: NotRequired[str | None]  # Question for DM when LASER FEELINGS occurs
+
+    # DEPRECATED fields (kept for backward compatibility)
+    dice_result: NotRequired[int]  # DEPRECATED: Use individual_rolls[0] instead
+    dice_success: NotRequired[bool]  # DEPRECATED: Use die_successes or total_successes
+    dice_complication: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
+    laser_feelings_occurred: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
 
     # Session tracking
     session_number: int  # Current game session number

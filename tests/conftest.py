@@ -13,6 +13,36 @@ from src.models.messages import Message, MessageChannel
 # Core models (these exist in Phase 2)
 from src.models.personality import CharacterRole, CharacterSheet, CharacterStyle, PlayerPersonality
 
+
+# --- Helper Functions ---
+
+def make_action_dict(
+    character_id: str,
+    narrative_text: str,
+    task_type: str | None = None,
+    is_prepared: bool = False,
+    prepared_justification: str | None = None,
+    is_expert: bool = False,
+    expert_justification: str | None = None,
+    is_helping: bool = False,
+    helping_character_id: str | None = None,
+    help_justification: str | None = None
+) -> dict[str, Any]:
+    """Helper to create ActionDict-compatible dictionaries for test fixtures"""
+    return {
+        "character_id": character_id,
+        "narrative_text": narrative_text,
+        "task_type": task_type,
+        "is_prepared": is_prepared,
+        "prepared_justification": prepared_justification,
+        "is_expert": is_expert,
+        "expert_justification": expert_justification,
+        "is_helping": is_helping,
+        "helping_character_id": helping_character_id,
+        "help_justification": help_justification
+    }
+
+
 # --- Personality and Character Fixtures ---
 
 @pytest.fixture
@@ -356,7 +386,10 @@ def simple_turn_data() -> dict[str, Any]:
         "turn_number": 1,
         "dm_narration": "You enter a dimly lit corridor.",
         "character_actions": {
-            "char_001": "I cautiously move forward, scanning for threats."
+            "char_001": make_action_dict(
+                "char_001",
+                "I cautiously move forward, scanning for threats."
+            )
         },
         "dm_outcome": "The corridor is clear. You see a door at the end.",
         "character_reactions": {
@@ -373,7 +406,10 @@ def npc_interaction_turn_data() -> dict[str, Any]:
         "turn_number": 8,
         "dm_narration": "The merchant Galvin greets you at his stall in the marketplace.",
         "character_actions": {
-            "char_001": "I greet Galvin and ask about rare artifacts."
+            "char_001": make_action_dict(
+                "char_001",
+                "I greet Galvin and ask about rare artifacts."
+            )
         },
         "dm_outcome": "Galvin leans in and whispers about a hidden temple in the northern desert.",
         "character_reactions": {
@@ -390,7 +426,11 @@ def combat_turn_data() -> dict[str, Any]:
         "turn_number": 15,
         "dm_narration": "A hostile robot blocks your path, weapon armed.",
         "character_actions": {
-            "char_001": "I attempt to disable it with my EMP device."
+            "char_001": make_action_dict(
+                "char_001",
+                "I attempt to disable it with my EMP device.",
+                task_type="lasers"
+            )
         },
         "dm_outcome": "Roll lasers. [Result: 5] Success! The robot's systems shut down.",
         "character_reactions": {
@@ -531,7 +571,9 @@ def make_turn_data():
             "session_number": session,
             "turn_number": turn,
             "dm_narration": f"Turn {turn} narration",
-            "character_actions": {"char_001": f"Action {turn}"},
+            "character_actions": {
+                "char_001": make_action_dict("char_001", f"Action {turn}")
+            },
             "dm_outcome": f"Outcome {turn}",
             "character_reactions": {"char_001": f"Reaction {turn}"}
         }

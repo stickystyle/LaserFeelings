@@ -16,6 +16,7 @@ from rq.job import Job
 from src.models.game_state import GamePhase, GameState
 from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
+from src.utils.dice import roll_lasers_feelings
 
 
 class JobFailedError(Exception):
@@ -43,26 +44,65 @@ class InvalidCommand(Exception):
 # ============================================================================
 
 
-def _get_character_id_for_agent(agent_id: str) -> str:
+def _load_agent_character_mapping() -> dict[str, str]:
     """
-    Map agent ID to character ID (MVP uses simple pattern).
-
-    Args:
-        agent_id: Agent identifier (e.g., "agent_001")
+    Load agent_id → character_id mapping from config files.
 
     Returns:
-        Character identifier (e.g., "char_001_001")
+        Dict mapping agent IDs to character IDs
+    """
+    import json
+    from pathlib import Path
+
+    mapping = {}
+    config_dir = Path("config/personalities")
+
+    if not config_dir.exists():
+        logger.warning(f"Config directory not found: {config_dir}")
+        return mapping
+
+    for config_file in config_dir.glob("char_*_character.json"):
+        try:
+            with open(config_file) as f:
+                char_config = json.load(f)
+                agent_id = char_config.get("agent_id")
+                character_id = char_config.get("character_id")
+
+                if agent_id and character_id:
+                    mapping[agent_id] = character_id
+        except Exception as e:
+            logger.warning(f"Failed to load {config_file}: {e}")
+
+    logger.info(f"Loaded agent-to-character mappings: {mapping}")
+    return mapping
+
+
+# Load mapping once at module level
+_AGENT_CHARACTER_MAPPING = _load_agent_character_mapping()
+
+
+def _get_character_id_for_agent(agent_id: str) -> str:
+    """
+    Map agent ID to character ID using config files.
+
+    Args:
+        agent_id: Agent identifier (e.g., "agent_alex_001")
+
+    Returns:
+        Character identifier (e.g., "char_zara_001")
 
     Raises:
-        ValueError: If agent_id format is invalid
-
-    Note:
-        TODO: Load from character config file when implemented (Phase 4+)
+        ValueError: If agent_id not found in mapping
     """
-    parts = agent_id.split('_')
-    if len(parts) < 2:
-        raise ValueError(f"Invalid agent_id format: {agent_id}")
-    return f"char_{parts[1]}_001"
+    character_id = _AGENT_CHARACTER_MAPPING.get(agent_id)
+
+    if not character_id:
+        raise ValueError(
+            f"No character mapping found for agent {agent_id}. "
+            f"Available agents: {list(_AGENT_CHARACTER_MAPPING.keys())}"
+        )
+
+    return character_id
 
 
 def _poll_job_with_backoff(job: Job, timeout: float) -> None:
@@ -336,7 +376,7 @@ def _create_character_action_node(character_queue: Queue):
         """
         logger.info(f"[PHASE: CHARACTER_ACTION] Turn {state['turn_number']}")
 
-        character_actions: dict[str, str] = {}
+        character_actions: dict[str, dict] = {}
 
         # Dispatch jobs for each character
         jobs: dict[str, Job] = {}
@@ -392,9 +432,9 @@ def _create_character_action_node(character_queue: Queue):
             if job.is_failed:
                 raise JobFailedError(f"Character action job failed for {character_id}: {job.exc_info}")
 
-            # Extract narrative_text from Action dict
+            # Store full Action dict (not just narrative_text)
             action_dict = job.result
-            character_actions[character_id] = action_dict.get("narrative_text", str(action_dict))
+            character_actions[character_id] = action_dict
 
         logger.info(f"Collected character actions from {len(character_actions)} characters")
 
@@ -442,52 +482,83 @@ def dm_adjudication_node(state: GameState) -> GameState:
 
 def dice_resolution_node(state: GameState) -> GameState:
     """
-    T053: Execute dice rolls if needed.
+    T053: Execute dice rolls using Lasers & Feelings multi-die system.
 
     Args:
         state: Current game state
 
     Returns:
-        Updated state with dice_result and dice_success
+        Updated state with dice roll result fields
     """
     logger.info(f"[PHASE: DICE_RESOLUTION] Turn {state['turn_number']}")
 
-    # Check for DM override
-    if "dice_override" in state and state["dice_override"] is not None:
-        dice_result = state["dice_override"]
-        logger.info(f"Using DM dice override: {dice_result}")
-    else:
-        # Roll 1d6 (Lasers & Feelings)
-        dice_result = random.randint(1, 6)
-        logger.info(f"Rolled 1d6: {dice_result}")
+    # Get character ID from state (first active agent for single-agent MVP)
+    character_id = state["active_agents"][0] if state["active_agents"] else None
+    if not character_id:
+        raise ValueError("No active agents found for dice resolution")
 
-    # Determine success based on character number and task type
-    # For MVP, we assume task_type is in state
-    task_type = state.get("dice_task_type", "lasers")
-    character_id = state.get("dice_action_character")
+    # Map agent_id to character_id
+    character_id = _get_character_id_for_agent(character_id)
 
-    # TODO: Load character number from config in full implementation
-    # For MVP, assume number = 3 (balanced)
-    character_number = 3
+    # Get character action to extract dice modifiers
+    character_action_dict = state["character_actions"].get(character_id, {})
 
-    # Lasers & Feelings rules:
-    # Lasers task: roll UNDER number to succeed
-    # Feelings task: roll OVER number to succeed
-    # Roll EXACTLY number: success with complication
-    if dice_result == character_number:
-        dice_success = True
-        dice_complication = True
-    elif task_type == "lasers":
-        dice_success = dice_result < character_number
-        dice_complication = False
-    else:  # feelings
-        dice_success = dice_result > character_number
-        dice_complication = False
+    # Extract action details
+    task_type = character_action_dict.get("task_type", "lasers")
+    is_prepared = character_action_dict.get("is_prepared", False)
+    is_expert = character_action_dict.get("is_expert", False)
+    is_helping = character_action_dict.get("is_helping", False)
 
-    logger.info(f"Dice resolution: {dice_result} vs {character_number} ({task_type}) = {'SUCCESS' if dice_success else 'FAILURE'}{' with COMPLICATION' if dice_complication else ''}")
+    # Get character number from config (MVP hardcoded)
+    # TODO: Load from character config in full implementation
+    character_number = 2  # Android Engineer (good at Lasers)
+
+    # Perform Lasers & Feelings roll
+    roll_result = roll_lasers_feelings(
+        character_number=character_number,
+        task_type=task_type,
+        is_prepared=is_prepared,
+        is_expert=is_expert,
+        is_helping=is_helping
+    )
+
+    # Log roll details
+    logger.info(
+        f"Dice resolution: {roll_result.individual_rolls} "
+        f"({roll_result.dice_count}d6, prepared={is_prepared}, expert={is_expert}, helping={is_helping}) "
+        f"vs number {character_number} ({task_type}) = "
+        f"{roll_result.total_successes} successes → {roll_result.outcome.value.upper()}"
+    )
+
+    if roll_result.has_laser_feelings:
+        logger.info(f"LASER FEELINGS! (rolled exact {character_number} on die(s) {roll_result.laser_feelings_indices})")
+
+    # Map LasersFeelingRollResult to GameState fields
+    # New fields (primary)
+    dice_roll_result = {
+        "character_number": roll_result.character_number,
+        "task_type": roll_result.task_type,
+        "is_prepared": roll_result.is_prepared,
+        "is_expert": roll_result.is_expert,
+        "is_helping": roll_result.is_helping,
+        "individual_rolls": roll_result.individual_rolls,
+        "die_successes": roll_result.die_successes,
+        "laser_feelings_indices": roll_result.laser_feelings_indices,
+        "total_successes": roll_result.total_successes,
+        "outcome": roll_result.outcome.value,
+        "timestamp": roll_result.timestamp
+    }
+
+    # Deprecated fields (backward compatibility)
+    dice_result = roll_result.individual_rolls[0] if roll_result.individual_rolls else 0
+    dice_success = roll_result.total_successes > 0
+    dice_complication = roll_result.has_laser_feelings or roll_result.outcome.value == "barely"
 
     return {
         **state,
+        # New fields (primary)
+        "dice_roll_result": dice_roll_result,
+        # Deprecated fields (backward compatibility)
         "dice_result": dice_result,
         "dice_success": dice_success,
         "dice_complication": dice_complication,
@@ -586,8 +657,9 @@ def _create_character_reaction_node(character_queue: Queue):
 
             logger.debug(f"Dispatching character reaction job for {character_id}")
 
-            # Get prior action for context
-            prior_action = state["character_actions"].get(character_id, "")
+            # Get prior action for context (extract narrative_text from Action dict)
+            prior_action_dict = state["character_actions"].get(character_id, {})
+            prior_action = prior_action_dict.get("narrative_text", "") if prior_action_dict else ""
 
             # TODO: Load character sheet config from configuration file
             # For MVP, using placeholder character sheet (same as in perform_action)

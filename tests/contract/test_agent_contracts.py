@@ -871,6 +871,196 @@ class TestCharacterAgentInterface:
         # (it's in character_sheet.number, but not exposed for mechanics awareness)
         assert not hasattr(agent, "character_number")
 
+    @pytest.mark.asyncio
+    async def test_action_has_dice_roll_suggestion_fields(
+        self,
+        thrain_character,
+        mock_openai_client
+    ):
+        """Verify Action model includes all dice roll suggestion fields"""
+        agent = CharacterAgent(
+            character_id="char_thrain",
+            character_sheet=thrain_character,
+            openai_client=mock_openai_client
+        )
+
+        from src.models.agent_actions import Directive
+        directive = Directive(
+            from_player="agent_test",
+            to_character="char_thrain",
+            instruction="Repair the damaged reactor",
+            emotional_tone="focused"
+        )
+
+        scene_context = "The reactor is sparking dangerously"
+
+        result = await agent.perform_action(
+            directive=directive,
+            scene_context=scene_context
+        )
+
+        # Verify all dice roll suggestion fields exist
+        assert hasattr(result, "task_type")
+        assert hasattr(result, "is_prepared")
+        assert hasattr(result, "prepared_justification")
+        assert hasattr(result, "is_expert")
+        assert hasattr(result, "expert_justification")
+        assert hasattr(result, "is_helping")
+        assert hasattr(result, "helping_character_id")
+        assert hasattr(result, "help_justification")
+
+        # Verify field types
+        assert result.task_type is None or result.task_type in ["lasers", "feelings"]
+        assert isinstance(result.is_prepared, bool)
+        assert result.prepared_justification is None or isinstance(
+            result.prepared_justification, str
+        )
+        assert isinstance(result.is_expert, bool)
+        assert result.expert_justification is None or isinstance(
+            result.expert_justification, str
+        )
+        assert isinstance(result.is_helping, bool)
+        assert result.helping_character_id is None or isinstance(
+            result.helping_character_id, str
+        )
+        assert result.help_justification is None or isinstance(
+            result.help_justification, str
+        )
+
+    def test_action_model_validation_with_justifications(self):
+        """Verify Action model validation passes when justifications are provided"""
+        from src.models.agent_actions import Action
+
+        # Valid action with prepared flag and justification
+        action = Action(
+            character_id="char_test",
+            narrative_text="Test action",
+            task_type="lasers",
+            is_prepared=True,
+            prepared_justification="Brought specialized tools and studied the problem"
+        )
+        assert action.is_prepared is True
+        assert action.prepared_justification is not None
+
+        # Valid action with expert flag and justification
+        action = Action(
+            character_id="char_test",
+            narrative_text="Test action",
+            task_type="lasers",
+            is_expert=True,
+            expert_justification="Years of engineering training"
+        )
+        assert action.is_expert is True
+        assert action.expert_justification is not None
+
+        # Valid action with helping flag and justifications
+        action = Action(
+            character_id="char_test",
+            narrative_text="Test action",
+            is_helping=True,
+            helping_character_id="char_other",
+            help_justification="Providing technical assistance"
+        )
+        assert action.is_helping is True
+        assert action.helping_character_id is not None
+        assert action.help_justification is not None
+
+    def test_action_model_validation_fails_missing_justifications(self):
+        """Verify Action validation fails when justifications missing but flags true"""
+        from pydantic import ValidationError
+
+        from src.models.agent_actions import Action
+
+        # Missing prepared_justification when is_prepared=True
+        with pytest.raises(ValidationError, match="prepared_justification is required"):
+            Action(
+                character_id="char_test",
+                narrative_text="Test action",
+                is_prepared=True
+                # Missing prepared_justification
+            )
+
+        # Missing expert_justification when is_expert=True
+        with pytest.raises(ValidationError, match="expert_justification is required"):
+            Action(
+                character_id="char_test",
+                narrative_text="Test action",
+                is_expert=True
+                # Missing expert_justification
+            )
+
+        # Missing helping_character_id when is_helping=True
+        with pytest.raises(ValidationError, match="helping_character_id is required"):
+            Action(
+                character_id="char_test",
+                narrative_text="Test action",
+                is_helping=True,
+                help_justification="Helping out"
+                # Missing helping_character_id
+            )
+
+        # Missing help_justification when is_helping=True
+        with pytest.raises(ValidationError, match="help_justification is required"):
+            Action(
+                character_id="char_test",
+                narrative_text="Test action",
+                is_helping=True,
+                helping_character_id="char_other"
+                # Missing help_justification
+            )
+
+    def test_action_json_serialization_preserves_dice_fields(self):
+        """Verify Action model JSON serialization preserves all dice roll suggestion fields"""
+        from src.models.agent_actions import Action
+
+        # Create action with all dice suggestion fields populated
+        action = Action(
+            character_id="char_thrain",
+            narrative_text="Thrain carefully inspects the reactor, adjusting the coolant flow.",
+            task_type="lasers",
+            is_prepared=True,
+            prepared_justification="Brought diagnostic tools and reviewed reactor schematics",
+            is_expert=True,
+            expert_justification="Years of engineering experience with similar systems",
+            is_helping=True,
+            helping_character_id="char_zara_001",
+            help_justification="Providing technical guidance while Zara assists"
+        )
+
+        # Serialize to dict
+        action_dict = action.model_dump()
+
+        # Verify all fields are preserved
+        assert action_dict["character_id"] == "char_thrain"
+        expected_narrative = (
+            "Thrain carefully inspects the reactor, adjusting the coolant flow."
+        )
+        assert action_dict["narrative_text"] == expected_narrative
+        assert action_dict["task_type"] == "lasers"
+        assert action_dict["is_prepared"] is True
+        expected_prep = "Brought diagnostic tools and reviewed reactor schematics"
+        assert action_dict["prepared_justification"] == expected_prep
+        assert action_dict["is_expert"] is True
+        expected_expert = "Years of engineering experience with similar systems"
+        assert action_dict["expert_justification"] == expected_expert
+        assert action_dict["is_helping"] is True
+        assert action_dict["helping_character_id"] == "char_zara_001"
+        expected_help = "Providing technical guidance while Zara assists"
+        assert action_dict["help_justification"] == expected_help
+
+        # Verify dict can round-trip back to Action model
+        action_restored = Action(**action_dict)
+        assert action_restored.character_id == action.character_id
+        assert action_restored.narrative_text == action.narrative_text
+        assert action_restored.task_type == action.task_type
+        assert action_restored.is_prepared == action.is_prepared
+        assert action_restored.prepared_justification == action.prepared_justification
+        assert action_restored.is_expert == action.is_expert
+        assert action_restored.expert_justification == action.expert_justification
+        assert action_restored.is_helping == action.is_helping
+        assert action_restored.helping_character_id == action.helping_character_id
+        assert action_restored.help_justification == action.help_justification
+
 
 # --- Error Handling Tests ---
 
