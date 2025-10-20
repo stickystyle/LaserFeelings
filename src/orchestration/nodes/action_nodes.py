@@ -8,7 +8,7 @@ from rq import Queue
 from rq.job import Job
 
 from src.models.game_state import GamePhase, GameState
-from src.models.messages import MessageChannel
+from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 from src.orchestration.nodes.helpers import (
     JobFailedError,
@@ -74,6 +74,24 @@ def _create_character_action_node(character_queue: Queue, router: MessageRouter)
                     "Proceeding with empty message context."
                 )
                 ic_messages = []
+
+            # Add character's own previous actions to context for mannerism variation awareness
+            # This helps the character avoid repeating the same mannerisms turn after turn
+            prior_actions = state.get("character_actions", {})
+            if character_id in prior_actions:
+                prior_action_dict = prior_actions[character_id]
+                prior_narrative = prior_action_dict.get("narrative_text", "")
+                if prior_narrative:
+                    # Prepend character's own action to message context
+                    ic_messages.insert(0, {
+                        "from_agent": character_id,
+                        "content": f"[Your previous action] {prior_narrative}",
+                        "channel": MessageChannel.IC.value,
+                        "message_type": MessageType.ACTION.value,
+                        "timestamp": datetime.now().isoformat(),
+                        "turn_number": state.get("turn_number", 0) - 1,
+                        "session_number": state.get("session_number"),
+                    })
 
             # Get strategic intent and transform to directive format
             # TODO: In full implementation, call BasePersonaAgent.create_character_directive()
