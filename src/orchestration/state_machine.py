@@ -14,7 +14,7 @@ from rq import Queue
 from rq.job import Job
 
 from src.models.game_state import GamePhase, GameState
-from src.models.messages import MessageChannel, MessageType
+from src.models.messages import Message, MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 from src.utils.dice import roll_lasers_feelings
 
@@ -351,12 +351,13 @@ def _create_p2c_directive_node(router: MessageRouter):
     return p2c_directive_node
 
 
-def _create_character_action_node(character_queue: Queue):
+def _create_character_action_node(character_queue: Queue, router: MessageRouter):
     """
     Factory for character_action_node with injected dependencies.
 
     Args:
         character_queue: RQ Queue for character worker jobs
+        router: MessageRouter for fetching IC messages
 
     Returns:
         Node function with captured queue dependency
@@ -385,6 +386,21 @@ def _create_character_action_node(character_queue: Queue):
             character_id = _get_character_id_for_agent(agent_id)
 
             logger.debug(f"Dispatching character action job for {character_id}")
+
+            # Fetch recent IC messages for character context with error handling
+            try:
+                all_messages = router.get_messages_for_agent(character_id, "character", limit=10)
+                ic_messages = [
+                    msg.model_dump()  # Preserve all message fields
+                    for msg in all_messages
+                    if msg.channel == MessageChannel.IC
+                ]
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch IC messages for {character_id}: {e}. "
+                    "Proceeding with empty message context."
+                )
+                ic_messages = []
 
             # Get strategic intent and transform to directive format
             # TODO: In full implementation, call BasePersonaAgent.create_character_directive()
@@ -415,7 +431,7 @@ def _create_character_action_node(character_queue: Queue):
 
             job = character_queue.enqueue(
                 'src.workers.character_worker.perform_action',
-                args=(character_id, directive, scene_context, placeholder_character_sheet),
+                args=(character_id, directive, scene_context, placeholder_character_sheet, ic_messages),
                 job_timeout=30,
                 result_ttl=300,
                 failure_ttl=600
@@ -947,12 +963,13 @@ def _create_dm_outcome_node(router: MessageRouter):
     return dm_outcome_node
 
 
-def _create_character_reaction_node(character_queue: Queue):
+def _create_character_reaction_node(character_queue: Queue, router: MessageRouter):
     """
     Factory for character_reaction_node with injected dependencies.
 
     Args:
         character_queue: RQ Queue for character worker jobs
+        router: MessageRouter for fetching IC messages
 
     Returns:
         Node function with captured queue dependency
@@ -981,6 +998,21 @@ def _create_character_reaction_node(character_queue: Queue):
 
             logger.debug(f"Dispatching character reaction job for {character_id}")
 
+            # Fetch recent IC messages for character context with error handling
+            try:
+                all_messages = router.get_messages_for_agent(character_id, "character", limit=10)
+                ic_messages = [
+                    msg.model_dump()  # Preserve all message fields
+                    for msg in all_messages
+                    if msg.channel == MessageChannel.IC
+                ]
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch IC messages for {character_id}: {e}. "
+                    "Proceeding with empty message context."
+                )
+                ic_messages = []
+
             # Get prior action for context (extract narrative_text from Action dict)
             prior_action_dict = state["character_actions"].get(character_id, {})
             prior_action = prior_action_dict.get("narrative_text", "") if prior_action_dict else ""
@@ -1001,7 +1033,7 @@ def _create_character_reaction_node(character_queue: Queue):
 
             job = character_queue.enqueue(
                 'src.workers.character_worker.react_to_outcome',
-                args=(character_id, state["dm_outcome"], prior_action, placeholder_character_sheet),
+                args=(character_id, state["dm_outcome"], prior_action, placeholder_character_sheet, ic_messages),
                 job_timeout=30,
                 result_ttl=300,
                 failure_ttl=600
@@ -1276,9 +1308,9 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     # Create node functions with injected dependencies (factory pattern)
     strategic_intent_node = _create_strategic_intent_node(base_persona_queue)
     p2c_directive_node = _create_p2c_directive_node(router)
-    character_action_node = _create_character_action_node(character_queue)
+    character_action_node = _create_character_action_node(character_queue, router)
     dm_outcome_node = _create_dm_outcome_node(router)
-    character_reaction_node = _create_character_reaction_node(character_queue)
+    character_reaction_node = _create_character_reaction_node(character_queue, router)
 
     # Initialize graph
     workflow = StateGraph(GameState)  # Use GameState TypedDict for schema

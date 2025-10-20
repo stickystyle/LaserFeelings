@@ -96,10 +96,39 @@ CRITICAL RULES:
 You are performing IN CHARACTER. Bring this character to life!
 """
 
+    def _format_ic_history(self, ic_messages: list[dict] | None) -> str:
+        """
+        Format recent in-character messages into a readable history string.
+
+        Args:
+            ic_messages: List of message dicts with "from_agent" and "content" keys,
+                        or None if no messages available
+
+        Returns:
+            Formatted string with header and message list, or empty string if no messages
+
+        Example output:
+            "Recent events you've witnessed:
+            - Zara-7: I attempt to repair the console
+            - dm: The console sparks as you work on it
+            "
+        """
+        if not ic_messages:
+            return ""
+
+        lines = ["Recent events you've witnessed:"]
+        for msg in ic_messages:
+            from_name = msg.get("from_agent", "unknown")
+            content = msg.get("content", "")
+            lines.append(f"- {from_name}: {content}")
+
+        return "\n".join(lines) + "\n"
+
     async def perform_action(
         self,
         directive: Directive,
         scene_context: str,
+        ic_messages: list[dict] | None = None,
     ) -> Action:
         """
         Execute in-character action based on player directive.
@@ -114,6 +143,7 @@ You are performing IN CHARACTER. Bring this character to life!
         Args:
             directive: High-level instruction from player layer
             scene_context: Current scene from DM
+            ic_messages: Recent in-character messages for context (optional)
 
         Returns:
             Action with narrative_text combining intent, dialogue, and mannerisms
@@ -130,10 +160,13 @@ You are performing IN CHARACTER. Bring this character to life!
                 "Provide this dependency in the constructor."
             )
 
+        ic_context = self._format_ic_history(ic_messages)
+
         system_prompt = self._build_character_system_prompt()
 
         user_prompt = f"""Scene:
 {scene_context}
+{ic_context}
 
 Player directive:
 {directive.instruction}
@@ -236,6 +269,7 @@ REMEMBER:
         self,
         dm_narration: str,
         emotional_state: EmotionalState,
+        ic_messages: list[dict] | None = None,
     ) -> Reaction:
         """
         Respond in-character to DM's outcome narration.
@@ -249,6 +283,7 @@ REMEMBER:
         Args:
             dm_narration: DM's outcome description
             emotional_state: Character's current emotional state
+            ic_messages: Recent in-character messages for context (optional)
 
         Returns:
             Reaction with narrative_text combining emotional response, dialogue, and next intent
@@ -264,9 +299,13 @@ REMEMBER:
                 "Provide this dependency in the constructor."
             )
 
+        ic_context = self._format_ic_history(ic_messages)
+
         system_prompt = self._build_character_system_prompt()
 
-        user_prompt = f"""DM narration (what happened):
+        user_prompt = f"""
+{ic_context}
+DM narration (what happened):
 {dm_narration}
 
 Your current emotional state:

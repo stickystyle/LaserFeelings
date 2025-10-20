@@ -188,10 +188,10 @@ class TestPerformActionGmQuestion:
             assert "special insight" in user_prompt
 
     @pytest.mark.asyncio
-    async def test_prompt_includes_example_questions(
+    async def test_prompt_focuses_on_roleplay_not_mechanics(
         self, character_agent, mock_openai_client
     ):
-        """Test that the prompt includes example questions for LASER FEELINGS"""
+        """Test that the prompt focuses on roleplay rather than mechanics education"""
         # Arrange
         directive = Directive(
             from_player="agent_alex_001",
@@ -214,14 +214,21 @@ class TestPerformActionGmQuestion:
             # Act
             await character_agent.perform_action(directive, scene_context)
 
-            # Assert - check for example questions
+            # Assert - check prompt is roleplay-focused
             call_args = mock_call.call_args
             user_prompt = call_args[0][1]
 
-            # Check for example questions from the Lasers & Feelings rules
-            assert "What are they really feeling?" in user_prompt
-            assert "Who's behind this?" in user_prompt
-            assert "What should I be on the lookout for?" in user_prompt
+            # Should focus on acting, not mechanics
+            assert "IN CHARACTER" in user_prompt
+            assert "narrative" in user_prompt
+            assert "ATTEMPT" in user_prompt.upper()
+
+            # Should NOT have detailed mechanics explanations (removed from character layer)
+            assert "LASER FEELINGS" not in user_prompt
+            assert "roll UNDER" not in user_prompt
+            assert "roll OVER" not in user_prompt
+            # Should be concise compared to old prompt which had extensive mechanics education
+            assert len(user_prompt.split('\n')) < 50
 
     @pytest.mark.asyncio
     async def test_json_schema_includes_gm_question_field(
@@ -368,6 +375,108 @@ class TestPerformActionValidation:
             # Act & Assert
             with pytest.raises(ValidationFailed, match="forbidden outcome language"):
                 await character_agent.perform_action(directive, scene_context)
+
+
+class TestFormatIcHistory:
+    """Test _format_ic_history() method for message history formatting"""
+
+    def test_format_ic_history_with_none(self, character_agent):
+        """Test that None returns empty string"""
+        # Act
+        result = character_agent._format_ic_history(None)
+
+        # Assert
+        assert result == ""
+
+    def test_format_ic_history_with_empty_list(self, character_agent):
+        """Test that empty list returns empty string"""
+        # Act
+        result = character_agent._format_ic_history([])
+
+        # Assert
+        assert result == ""
+
+    def test_format_ic_history_with_single_message(self, character_agent):
+        """Test formatting a single message"""
+        # Arrange
+        ic_messages = [
+            {
+                "from_agent": "Zara-7",
+                "content": "I attempt to repair the console"
+            }
+        ]
+
+        # Act
+        result = character_agent._format_ic_history(ic_messages)
+
+        # Assert
+        expected = "Recent events you've witnessed:\n- Zara-7: I attempt to repair the console\n"
+        assert result == expected
+
+    def test_format_ic_history_with_multiple_messages(self, character_agent):
+        """Test formatting multiple messages from different characters"""
+        # Arrange
+        ic_messages = [
+            {
+                "from_agent": "Zara-7",
+                "content": "I attempt to repair the console"
+            },
+            {
+                "from_agent": "dm",
+                "content": "The console sparks as you work on it"
+            },
+            {
+                "from_agent": "Kael",
+                "content": "I move to cover the engineer"
+            }
+        ]
+
+        # Act
+        result = character_agent._format_ic_history(ic_messages)
+
+        # Assert
+        expected = (
+            "Recent events you've witnessed:\n"
+            "- Zara-7: I attempt to repair the console\n"
+            "- dm: The console sparks as you work on it\n"
+            "- Kael: I move to cover the engineer\n"
+        )
+        assert result == expected
+
+    def test_format_ic_history_with_missing_keys(self, character_agent):
+        """Test graceful handling of messages with missing from_agent or content keys"""
+        # Arrange
+        ic_messages = [
+            {
+                "from_agent": "Zara-7",
+                "content": "I attempt to scan"
+            },
+            {
+                # Missing from_agent
+                "content": "The scan reveals something"
+            },
+            {
+                "from_agent": "dm",
+                # Missing content
+            },
+            {
+                "from_agent": "Kael",
+                "content": "I respond to the findings"
+            }
+        ]
+
+        # Act
+        result = character_agent._format_ic_history(ic_messages)
+
+        # Assert
+        expected = (
+            "Recent events you've witnessed:\n"
+            "- Zara-7: I attempt to scan\n"
+            "- unknown: The scan reveals something\n"
+            "- dm: \n"
+            "- Kael: I respond to the findings\n"
+        )
+        assert result == expected
 
 
 class TestRuntimeDependencies:

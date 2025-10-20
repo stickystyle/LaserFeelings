@@ -11,6 +11,7 @@ def perform_action(
     directive: dict[str, Any],
     scene_context: str,
     character_sheet_config: dict[str, Any],
+    ic_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     RQ worker function: CharacterAgent performs in-character action based on directive.
@@ -26,6 +27,8 @@ def perform_action(
         character_sheet_config: Character sheet configuration dict with keys:
             {name, style, role, number, character_goal, equipment, speech_patterns,
             mannerisms, approach_bias}
+        ic_messages: Recent in-character messages for context (optional). List of message
+            dicts from Message.model_dump().
 
     Returns:
         Action dict with full Pydantic model - character's in-character action attempt
@@ -75,6 +78,7 @@ def perform_action(
             return await agent.perform_action(
                 directive=directive_obj,
                 scene_context=scene_context,
+                ic_messages=ic_messages,
             )
 
         # Run async function in event loop
@@ -96,6 +100,7 @@ def react_to_outcome(
     outcome: str,
     prior_action: str,
     character_sheet_config: dict[str, Any],
+    ic_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     RQ worker function: CharacterAgent reacts to DM's outcome narration.
@@ -110,6 +115,8 @@ def react_to_outcome(
         character_sheet_config: Character sheet configuration dict with keys:
             {name, style, role, number, character_goal, equipment, speech_patterns,
             mannerisms, approach_bias}
+        ic_messages: Recent in-character messages for context (optional). List of message
+            dicts from Message.model_dump().
 
     Returns:
         Reaction dict with full Pydantic model - character's in-character emotional response
@@ -162,6 +169,7 @@ def react_to_outcome(
             return await agent.react_to_outcome(
                 dm_narration=outcome,
                 emotional_state=emotional_state,
+                ic_messages=ic_messages,
             )
 
         # Run async function in event loop
