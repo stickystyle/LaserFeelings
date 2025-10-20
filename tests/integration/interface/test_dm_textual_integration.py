@@ -147,19 +147,22 @@ async def test_show_roll_suggestion_displays_panel(mock_orchestrator, mock_route
     """Integration: Roll suggestion panel displays correctly."""
     app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
 
-    suggestion = {
-        "character_name": "Zara-7",
-        "character_id": "char_zara_001",
-        "task_type": "Lasers",
-        "prepared_context": "I studied the schematics",
-        "suggested_roll": "2d6 Lasers",
+    action_dict = {
+        "task_type": "lasers",
+        "is_prepared": True,
+        "prepared_justification": "I studied the schematics",
+        "is_expert": False,
+        "is_helping": False,
     }
+    character_name = "Zara-7"
 
     async with app.run_test():
-        app.show_roll_suggestion(suggestion)
+        app.show_roll_suggestion(action_dict, character_name)
 
-        # Verify suggestion was stored
-        assert app._current_roll_suggestion == suggestion
+        # Verify suggestion was stored (new format)
+        assert app._current_roll_suggestion is not None
+        assert app._current_roll_suggestion["action_dict"] == action_dict
+        assert app._current_roll_suggestion["character_name"] == character_name
 
         # Game log should exist
         game_log = app.query_one("#game-log")
@@ -328,37 +331,53 @@ async def test_roll_response_accept_calls_orchestrator(mock_orchestrator, mock_r
 
     app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
 
-    suggestion = {
-        "character_name": "Zara-7",
-        "character_id": "char_zara_001",
-        "task_type": "Lasers",
-        "prepared_context": "I studied the schematics",
-        "suggested_roll": "2d6 Lasers",
+    # Set up character configuration (required for roll execution)
+    app._character_configs = {
+        "char_zara_001": {
+            "character_id": "char_zara_001",
+            "name": "Zara-7",
+            "number": 2,  # Lasers & Feelings character number
+        }
+    }
+
+    # Set up turn result with character actions (required for roll execution)
+    action_dict = {
+        "task_type": "lasers",
+        "is_prepared": True,
+        "prepared_justification": "I studied the schematics",
+        "is_expert": False,
+        "is_helping": False,
+    }
+
+    app._current_turn_result = {
+        "character_actions": {
+            "char_zara_001": action_dict
+        }
+    }
+
+    # Set up roll suggestion (new format)
+    app._current_roll_suggestion = {
+        "action_dict": action_dict,
+        "character_name": "Zara-7"
     }
 
     async with app.run_test():
-        app._current_roll_suggestion = suggestion
-
         from textual.widgets import Input
 
         input_widget = app.query_one("#dm-input", Input)
         event = Input.Submitted(input_widget, "accept")
         await app.on_input_submitted(event)
 
-        # Allow background task to complete
-        await asyncio.sleep(0.1)
+        # Allow background task to complete (needs more time for thread pool execution)
+        await asyncio.sleep(0.5)
 
-        # Allow background task to complete
-        await asyncio.sleep(0.1)
-
-        # Verify orchestrator was called with correct parameters
-        mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
-            session_number=1,
-            dm_input_type="adjudication",
-            dm_input_data={
-                "needs_dice": True,
-            }
-        )
+        # Verify orchestrator was called (the actual call includes roll_result which varies)
+        assert mock_orchestrator.resume_turn_with_dm_input.called
+        call_args = mock_orchestrator.resume_turn_with_dm_input.call_args
+        assert call_args.kwargs["session_number"] == 1
+        assert call_args.kwargs["dm_input_type"] == "adjudication"
+        assert call_args.kwargs["dm_input_data"]["needs_dice"] is True
+        assert "roll_result" in call_args.kwargs["dm_input_data"]
 
         # Suggestion should be cleared
         assert app._current_roll_suggestion is None
@@ -917,3 +936,75 @@ async def test_connection_error_during_follow_up_poll_exits_mode(
 
         # Connection error during follow-up poll should exit clarification mode
         assert app._clarification_mode is False
+
+
+@pytest.mark.asyncio
+async def test_done_command_with_no_follow_ups_resumes_turn(
+    mock_orchestrator, mock_router
+):
+    """Integration: Done command with no follow-up questions calls orchestrator to resume turn."""
+    mock_orchestrator.resume_turn_with_dm_input.return_value = {
+        "phase_completed": "strategic_intent"
+    }
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Any guards?"}]
+
+    # Mock _fetch_new_clarification_questions to return no follow-ups
+    app._fetch_new_clarification_questions = Mock(return_value=[])
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+        event = Input.Submitted(input_widget, "done")
+        await app.on_input_submitted(event)
+
+        # Allow background task to complete
+        await asyncio.sleep(0.5)
+
+        # Clarification mode should be cleared
+        assert app._clarification_mode is False
+        assert app._pending_questions is None
+
+        # Orchestrator should be called to resume turn with empty answers
+        mock_orchestrator.resume_turn_with_dm_input.assert_called_once_with(
+            session_number=1,
+            dm_input_type="dm_clarification_answer",
+            dm_input_data={"answers": [], "force_finish": False}
+        )
+
+
+@pytest.mark.asyncio
+async def test_done_command_with_no_follow_ups_handles_orchestrator_error(
+    mock_orchestrator, mock_router
+):
+    """Integration: Done command handles orchestrator errors gracefully."""
+    mock_orchestrator.resume_turn_with_dm_input.side_effect = ConnectionError(
+        "Connection lost"
+    )
+
+    app = DMTextualInterface(orchestrator=mock_orchestrator, router=mock_router)
+    app._clarification_mode = True
+    app._pending_questions = [{"agent_id": "agent_1", "question_text": "Any guards?"}]
+
+    # Mock _fetch_new_clarification_questions to return no follow-ups
+    app._fetch_new_clarification_questions = Mock(return_value=[])
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        input_widget = app.query_one("#dm-input", Input)
+        event = Input.Submitted(input_widget, "done")
+        await app.on_input_submitted(event)
+
+        # Allow background task to complete and fail
+        await asyncio.sleep(0.5)
+
+        # Clarification mode should be cleared even on error
+        assert app._clarification_mode is False
+        assert app._pending_questions is None
+
+        # Orchestrator was called
+        mock_orchestrator.resume_turn_with_dm_input.assert_called_once()
