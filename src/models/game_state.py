@@ -102,7 +102,7 @@ class ValidationState(TypedDict):
     """State specific to validation phase"""
 
     character_id: str
-    action_text: str
+    narrative_text: str
     attempt: int
     valid: bool
     violations: list[str]

@@ -2,6 +2,7 @@
 # ABOUTME: Defines the contract between BasePersona (player) and Character (roleplay) layers.
 
 from enum import Enum
+
 from pydantic import BaseModel, Field
 
 
@@ -50,40 +51,24 @@ class Directive(BaseModel):
 
 
 class Action(BaseModel):
-    """In-character action performed by Character agent (roleplay layer)"""
+    """In-character action performed by Character agent as cohesive narrative prose"""
 
     character_id: str = Field(
         description="Character ID performing the action"
     )
-    action_text: str = Field(
-        description="In-character action attempt (intent only, no outcomes)"
-    )
-    dialogue: str | None = Field(
-        default=None,
-        description="Spoken words (if character speaks during action)"
-    )
-    mannerisms: str | None = Field(
-        default=None,
-        description="Physical actions, body language, gestures"
+    narrative_text: str = Field(
+        description="Complete action as flowing narrative combining intent, dialogue, and mannerisms"
     )
 
 
 class Reaction(BaseModel):
-    """In-character emotional response to DM's outcome narration"""
+    """In-character emotional response to DM's outcome narration as cohesive narrative prose"""
 
     character_id: str = Field(
         description="Character ID reacting"
     )
-    reaction_text: str = Field(
-        description="In-character emotional response to outcome"
-    )
-    dialogue: str | None = Field(
-        default=None,
-        description="Spoken words in reaction"
-    )
-    next_intent: str | None = Field(
-        default=None,
-        description="What character wants to do next (if relevant)"
+    narrative_text: str = Field(
+        description="Complete reaction as flowing narrative combining emotional response, dialogue, and next intent"
     )
 
 

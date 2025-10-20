@@ -1,20 +1,19 @@
 # ABOUTME: LangGraph state machine orchestrating turn-based TTRPG gameplay through 10 phase handlers.
 # ABOUTME: Implements phase transitions, RQ job dispatch, error recovery, and checkpointing for turn cycle.
 
+import random
+import time
 from datetime import datetime
 from typing import Literal
-import time
-import json
-import random
 
-from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+from loguru import logger
 from redis import Redis
 from rq import Queue
 from rq.job import Job
-from loguru import logger
 
-from src.models.game_state import GameState, GamePhase
+from src.models.game_state import GamePhase, GameState
 from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 
@@ -393,7 +392,9 @@ def _create_character_action_node(character_queue: Queue):
             if job.is_failed:
                 raise JobFailedError(f"Character action job failed for {character_id}: {job.exc_info}")
 
-            character_actions[character_id] = job.result
+            # Extract narrative_text from Action dict
+            action_dict = job.result
+            character_actions[character_id] = action_dict.get("narrative_text", str(action_dict))
 
         logger.info(f"Collected character actions from {len(character_actions)} characters")
 
@@ -621,7 +622,9 @@ def _create_character_reaction_node(character_queue: Queue):
             if job.is_failed:
                 raise JobFailedError(f"Character reaction job failed for {character_id}: {job.exc_info}")
 
-            character_reactions[character_id] = job.result
+            # Extract narrative_text from Reaction dict
+            reaction_dict = job.result
+            character_reactions[character_id] = reaction_dict.get("narrative_text", str(reaction_dict))
 
         logger.info(f"Collected character reactions from {len(character_reactions)} characters")
 
@@ -775,7 +778,7 @@ def validation_escalate_node(state: GameState) -> GameState:
     Returns:
         Updated state with DM review flag set
     """
-    logger.error(f"[VALIDATION ESCALATE] Max retries exceeded, flagging for DM review")
+    logger.error("[VALIDATION ESCALATE] Max retries exceeded, flagging for DM review")
 
     return {
         **state,
@@ -904,11 +907,15 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     # Memory consolidation ends turn
     workflow.add_edge("memory_consolidation", END)
 
-    # T058: Compile with checkpointing
+    # T058: Compile with checkpointing and interrupt points
+    # Interrupt before DM input phases to allow interactive CLI prompting
     checkpointer = MemorySaver()
-    app = workflow.compile(checkpointer=checkpointer)
+    app = workflow.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["dm_adjudication", "dm_outcome"]
+    )
 
-    logger.info("Turn cycle state machine built successfully")
+    logger.info("Turn cycle state machine built successfully with interrupt points at dm_adjudication and dm_outcome")
     return app
 
 
@@ -957,6 +964,7 @@ class TurnOrchestrator:
 
         Returns:
             TurnResult dict with success, phase_completed, actions, etc.
+            If interrupted, includes "awaiting_dm_input": True and "awaiting_phase"
 
         Raises:
             PhaseTransitionError: When state machine cannot proceed
@@ -995,15 +1003,36 @@ class TurnOrchestrator:
             # Run the graph
             result = self.graph.invoke(initial_state, config=config)
 
-            # Extract turn result
+            # Check if graph was interrupted (awaiting DM input)
+            snapshot = self.graph.get_state(config)
+            next_nodes = snapshot.next
+
+            if next_nodes:
+                # Graph is paused, awaiting DM input
+                awaiting_phase = next_nodes[0] if next_nodes else None
+                logger.info(f"Graph interrupted at {awaiting_phase}, awaiting DM input")
+
+                return {
+                    "turn_number": turn_number,
+                    "phase_completed": result["current_phase"],
+                    "success": True,
+                    "awaiting_dm_input": True,
+                    "awaiting_phase": awaiting_phase,
+                    "strategic_intents": result.get("strategic_intents", {}),
+                    "character_actions": result.get("character_actions", {}),
+                    "session_number": session_number
+                }
+
+            # Extract turn result (turn completed fully)
             turn_result = {
                 "turn_number": turn_number,
                 "phase_completed": result["current_phase"],
                 "success": True,
+                "strategic_intents": result.get("strategic_intents", {}),
                 "character_actions": result.get("character_actions", {}),
                 "validation_warnings": [],  # TODO: Extract from validation state
                 "consensus_state": result.get("consensus_state"),
-                "dm_awaiting_input": False
+                "awaiting_dm_input": False
             }
 
             logger.info(f"=== TURN {turn_number} COMPLETED SUCCESSFULLY ===")
@@ -1011,6 +1040,103 @@ class TurnOrchestrator:
 
         except Exception as e:
             logger.error(f"Turn execution failed: {e}")
+            raise
+
+    def resume_turn_with_dm_input(
+        self,
+        session_number: int,
+        dm_input_type: Literal["adjudication", "outcome"],
+        dm_input_data: dict
+    ) -> dict:
+        """
+        Resume interrupted turn with DM input.
+
+        Args:
+            session_number: Session to resume
+            dm_input_type: Type of DM input ("adjudication" or "outcome")
+            dm_input_data: DM's input data:
+                - For adjudication: {"needs_dice": bool, "dice_override": int | None}
+                - For outcome: {"outcome_text": str}
+
+        Returns:
+            TurnResult dict, possibly with another interruption
+
+        Raises:
+            ValueError: If session has no interrupted state
+        """
+        thread_id = f"session_{session_number}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        # Get current state
+        snapshot = self.graph.get_state(config)
+        if not snapshot.next:
+            raise ValueError(f"Session {session_number} is not in an interrupted state")
+
+        current_state = snapshot.values
+        awaiting_phase = snapshot.next[0]
+
+        logger.info(f"Resuming session {session_number} at {awaiting_phase} with {dm_input_type} input")
+
+        # Update state based on DM input type
+        if dm_input_type == "adjudication":
+            # DM provided adjudication (needs dice? manual override?)
+            current_state["dm_adjudication_needed"] = dm_input_data.get("needs_dice", True)
+            if "dice_override" in dm_input_data:
+                current_state["dice_override"] = dm_input_data["dice_override"]
+            # If DM provided manual success/fail ruling, set dice_success flag
+            if "manual_success" in dm_input_data:
+                current_state["dice_success"] = dm_input_data["manual_success"]
+
+        elif dm_input_type == "outcome":
+            # DM provided outcome narration
+            current_state["dm_outcome"] = dm_input_data["outcome_text"]
+
+        else:
+            raise ValueError(f"Invalid dm_input_type: {dm_input_type}")
+
+        # Update graph state with DM input
+        self.graph.update_state(config, current_state)
+
+        # Resume execution
+        try:
+            result = self.graph.invoke(None, config=config)
+
+            # Check if interrupted again
+            snapshot = self.graph.get_state(config)
+            next_nodes = snapshot.next
+
+            if next_nodes:
+                # Still interrupted, awaiting more DM input
+                awaiting_phase = next_nodes[0]
+                logger.info(f"Graph interrupted again at {awaiting_phase}, awaiting DM input")
+
+                return {
+                    "turn_number": result["turn_number"],
+                    "phase_completed": result["current_phase"],
+                    "success": True,
+                    "awaiting_dm_input": True,
+                    "awaiting_phase": awaiting_phase,
+                    "strategic_intents": result.get("strategic_intents", {}),
+                    "character_actions": result.get("character_actions", {}),
+                    "session_number": session_number
+                }
+
+            # Turn completed
+            logger.info(f"=== TURN {result['turn_number']} COMPLETED SUCCESSFULLY ===")
+            return {
+                "turn_number": result["turn_number"],
+                "phase_completed": result["current_phase"],
+                "success": True,
+                "strategic_intents": result.get("strategic_intents", {}),
+                "character_actions": result.get("character_actions", {}),
+                "character_reactions": result.get("character_reactions", {}),
+                "validation_warnings": [],
+                "consensus_state": result.get("consensus_state"),
+                "awaiting_dm_input": False
+            }
+
+        except Exception as e:
+            logger.error(f"Turn resume failed: {e}")
             raise
 
     def transition_to_phase(self, session_number: int, target_phase: str) -> dict:

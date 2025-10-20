@@ -129,29 +129,22 @@ def mock_openai_client():
         # Return contextual responses based on prompt content
         # Check for specific JSON response formats first - ORDER MATTERS!
         # Most specific checks first, then more general ones
-        if ("reaction_text" in last_content or "your current emotional state" in last_content or "primary emotion" in last_content or "dm narration" in last_content) and "json" in last_content:
+        if ("narrative_text" in last_content and "your current emotional state" in last_content or "primary emotion" in last_content or "dm narration" in last_content) and "json" in last_content:
             # Reaction to outcome - context-aware responses
-            reaction_text = "Fascinating. The readings are quite unusual."
-            dialogue_text = "Well I'll be, lad. Never seen anything quite like this."
+            narrative_text = "Fascinating. The readings are quite unusual. 'Well I'll be, lad. Never seen anything quite like this.'"
 
             if "explosion" in last_content or "fear" in last_content:
-                reaction_text = "The ship lurches violently and I grab onto the console for support"
-                dialogue_text = "By the stars! We need to stabilize the ship immediately!"
+                narrative_text = "The ship lurches violently and I grab onto the console for support. 'By the stars!' I exclaim, my voice tense. 'We need to stabilize the ship immediately!'"
             elif "machinery" in last_content or "joy" in last_content:
-                reaction_text = "A satisfied smile spreads across my face as the systems hum to life"
-                dialogue_text = "Excellent! Just as I calculated, lad."
+                narrative_text = "A satisfied smile spreads across my face as the systems hum to life. 'Excellent!' I say with pride. 'Just as I calculated, lad.'"
             elif "goblin" in last_content or "relief" in last_content or "neutral" in last_content:
-                reaction_text = "I let out a breath I didn't know I was holding"
-                dialogue_text = "Well, that's one less problem to worry about."
+                narrative_text = "I let out a breath I didn't know I was holding. 'Well,' I mutter, 'that's one less problem to worry about.'"
             elif "corridor" in last_content or "surprise" in last_content:
-                reaction_text = "I peer down the long corridor with curiosity"
-                dialogue_text = "Interesting. Let's see what lies ahead."
+                narrative_text = "I peer down the long corridor with curiosity. 'Interesting,' I say quietly. 'Let's see what lies ahead. I want to proceed cautiously.'"
 
             content = json.dumps({
                 "character_id": "char_thrain",
-                "reaction_text": reaction_text,
-                "dialogue": dialogue_text,
-                "next_intent": "Continue analyzing the situation"
+                "narrative_text": narrative_text
             })
         elif "strategic_goal" in last_content and "json" in last_content:
             # Intent formulation
@@ -181,13 +174,11 @@ def mock_openai_client():
                 "instruction": instruction_text,
                 "emotional_tone": emotion_tone
             })
-        elif "action_text" in last_content and "json" in last_content:
-            # Action performance
+        elif "narrative_text" in last_content and "scene" in last_content and "json" in last_content:
+            # Action performance - now uses narrative_text field
             content = json.dumps({
                 "character_id": "char_thrain",
-                "action_text": "I attempt to scan the area with my tricorder, looking for signs of life.",
-                "dialogue": "Let me check these readings, lad.",
-                "mannerisms": "Taps fingers on the tricorder while waiting for results"
+                "narrative_text": "I tap my fingers on the tricorder while waiting for results. 'Let me check these readings, lad,' I say, attempting to scan the area for signs of life."
             })
         elif "strategic" in last_content or "intent" in last_content:
             content = "Carefully examine the situation before acting. Assess risks."

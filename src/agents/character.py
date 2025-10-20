@@ -116,7 +116,7 @@ You are performing IN CHARACTER. Bring this character to life!
             scene_context: Current scene from DM
 
         Returns:
-            Action with action_text, optional dialogue, mannerisms
+            Action with narrative_text combining intent, dialogue, and mannerisms
 
         Raises:
             RuntimeError: When openai_client not provided to constructor
@@ -143,15 +143,21 @@ Player directive:
 
 Perform this action IN CHARACTER as JSON:
 {{
-  "action_text": "What you ATTEMPT to do (intent only, no outcomes)",
-  "dialogue": "What you say (if anything)",
-  "mannerisms": "Physical actions, body language, gestures"
+  "narrative_text": "Your complete action as flowing narrative prose"
 }}
 
+Write your action as cohesive narrative that combines:
+- What you ATTEMPT to do (intent only, no outcomes)
+- What you say (if anything)
+- Your physical mannerisms and body language
+
+Example: "I tilt my head, processing the data. 'Fascinating,' I say quietly, reaching for my scanner. I attempt to interface with the console's diagnostic port."
+
 REMEMBER:
-- Use "I attempt to...", "I try to...", "I aim to..."
+- Use "I attempt to...", "I try to...", "I aim to..." for actions
 - NEVER say "I successfully...", "I hit...", "I kill..."
 - Express your intent, let the DM narrate what actually happens
+- Write as flowing prose, not separate sections
 """
 
         try:
@@ -166,14 +172,12 @@ REMEMBER:
 
             action = Action(
                 character_id=self.character_id,
-                action_text=data.get("action_text", ""),
-                dialogue=data.get("dialogue"),
-                mannerisms=data.get("mannerisms"),
+                narrative_text=data.get("narrative_text", ""),
             )
 
-            # Validate action_text is present
-            if not action.action_text:
-                raise ValidationFailed("Action missing required action_text field")
+            # Validate narrative_text is present
+            if not action.narrative_text:
+                raise ValidationFailed("Action missing required narrative_text field")
 
             # Context-aware validation for forbidden patterns using regex
             forbidden_patterns = [
@@ -185,12 +189,12 @@ REMEMBER:
                 (r"\b(he|she|it|they)\s+(die|dies|fall|falls|collapse|collapses)\b", "outcome narration (entity dies/falls)"),
             ]
 
-            action_text = action.action_text
+            narrative_text = action.narrative_text
             for pattern, description in forbidden_patterns:
-                if re.search(pattern, action_text, re.IGNORECASE):
+                if re.search(pattern, narrative_text, re.IGNORECASE):
                     raise ValidationFailed(
                         f"Action contains forbidden outcome language: '{description}'. "
-                        f"Matched pattern in: '{action_text}'. "
+                        f"Matched pattern in: '{narrative_text}'. "
                         f"Express intent only, not results."
                     )
 
@@ -218,7 +222,7 @@ REMEMBER:
             emotional_state: Character's current emotional state
 
         Returns:
-            Reaction with reaction_text, optional dialogue, next_intent
+            Reaction with narrative_text combining emotional response, dialogue, and next intent
 
         Raises:
             RuntimeError: When openai_client not provided to constructor
@@ -243,13 +247,19 @@ Your current emotional state:
 
 React to this outcome IN CHARACTER as JSON:
 {{
-  "reaction_text": "Your emotional/physical response to what happened",
-  "dialogue": "What you say in reaction (if anything)",
-  "next_intent": "What you want to do next (if relevant)"
+  "narrative_text": "Your complete reaction as flowing narrative prose"
 }}
+
+Write your reaction as cohesive narrative that combines:
+- Your emotional/physical response to what happened
+- What you say in reaction (if anything)
+- What you want to do next (if relevant)
+
+Example: "Relief washes over me. 'We did it!' I exclaim, allowing a rare smile. I want to examine the now-active systems to ensure stability."
 
 React authentically to the outcome. Show emotion, personality, and character voice.
 This is a REACTION, not a new action - respond to what happened.
+Write as flowing prose, not separate sections.
 """
 
         try:
@@ -264,14 +274,12 @@ This is a REACTION, not a new action - respond to what happened.
 
             reaction = Reaction(
                 character_id=self.character_id,
-                reaction_text=data.get("reaction_text", ""),
-                dialogue=data.get("dialogue"),
-                next_intent=data.get("next_intent"),
+                narrative_text=data.get("narrative_text", ""),
             )
 
-            # Validate reaction_text is present
-            if not reaction.reaction_text:
-                raise ValidationFailed("Reaction missing required reaction_text field")
+            # Validate narrative_text is present
+            if not reaction.narrative_text:
+                raise ValidationFailed("Reaction missing required narrative_text field")
 
             return reaction
 

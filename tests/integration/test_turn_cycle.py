@@ -5,12 +5,13 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.agents.base_persona import BasePersonaAgent
-from src.agents.character import CharacterAgent
-from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
 # These imports will fail until implementations exist (TDD phase)
 from src.orchestrator.turn_manager import TurnManager
+
+from src.agents.base_persona import BasePersonaAgent
+from src.agents.character import CharacterAgent
+from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
 # Core models and enums
 from src.models.game_state import GamePhase, GameState
@@ -322,9 +323,7 @@ class TestTurnCycleValidationRetry:
             # First attempt: Contains forbidden outcome
             mock_action.return_value = MagicMock(
                 character_id="char_001",
-                action_text="I strike the guard and kill him instantly.",  # Forbidden!
-                dialogue=None,
-                mannerisms=None
+                narrative_text="I strike the guard and kill him instantly.",  # Forbidden!
             )
 
             initial_game_state["dm_narration"] = dm_narration
@@ -361,21 +360,21 @@ class TestTurnCycleValidationRetry:
                 # First attempt: violates rules
                 return MagicMock(
                     character_id="char_001",
-                    action_text="I successfully pick the lock.",  # Forbidden "successfully"
+                    narrative_text="I successfully pick the lock.",  # Forbidden "successfully"
                     attempt=attempt_count
                 )
             elif attempt_count == 2:
                 # Second attempt: still violates
                 return MagicMock(
                     character_id="char_001",
-                    action_text="I manage to open the lock.",  # Forbidden "manage to"
+                    narrative_text="I manage to open the lock.",  # Forbidden "manage to"
                     attempt=attempt_count
                 )
             else:
                 # Third attempt: corrected
                 return MagicMock(
                     character_id="char_001",
-                    action_text="I attempt to pick the lock with my tools.",  # Valid!
+                    narrative_text="I attempt to pick the lock with my tools.",  # Valid!
                     attempt=attempt_count
                 )
 
@@ -403,7 +402,7 @@ class TestTurnCycleValidationRetry:
         async def always_violate(directive, scene_context, attempt=1):
             return MagicMock(
                 character_id="char_001",
-                action_text="I strike the monster and it dies immediately.",  # Always wrong
+                narrative_text="I strike the monster and it dies immediately.",  # Always wrong
                 attempt=attempt
             )
 

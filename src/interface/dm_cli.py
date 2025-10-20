@@ -6,11 +6,12 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 
-from redis import Redis
 from loguru import logger
+from redis import Redis
 
 from src.config.settings import get_settings
 from src.models.game_state import GamePhase
+from src.orchestration.message_router import MessageRouter
 from src.orchestration.state_machine import TurnOrchestrator
 from src.utils.dice import parse_dice_notation, roll_dice
 from src.utils.logging import setup_logging
@@ -335,6 +336,86 @@ class CLIFormatter:
 
         return "\n".join(lines)
 
+    def format_character_action_with_directive(
+        self,
+        character_name: str,
+        directive_text: str,
+        action_dict: dict
+    ) -> str:
+        """
+        Format character action showing both player directive and character performance.
+
+        Args:
+            character_name: Human-readable character name (e.g., "Zara-7")
+            directive_text: The strategic goal/instruction from the player
+            action_dict: The Action model dict with narrative_text field
+
+        Returns:
+            Formatted string with labeled sections
+        """
+        lines = [f"\n{character_name}:"]
+        lines.append(f"  Player Directive: {directive_text}")
+
+        narrative = action_dict.get("narrative_text", "")
+        lines.append(f"  Character Performance: {narrative}")
+
+        return "\n".join(lines)
+
+    def format_character_reaction_detailed(
+        self,
+        character_name: str,
+        reaction_dict: dict
+    ) -> str:
+        """
+        Format character reaction as cohesive narrative.
+
+        Args:
+            character_name: Human-readable character name (e.g., "Zara-7")
+            reaction_dict: The Reaction model dict with narrative_text field
+
+        Returns:
+            Formatted string with labeled sections
+        """
+        lines = [f"\n{character_name}:"]
+
+        narrative = reaction_dict.get("narrative_text", "")
+        lines.append(f"  {narrative}")
+
+        return "\n".join(lines)
+
+    def format_ooc_summary(
+        self,
+        messages: list,
+        turn_number: int,
+        agent_names: dict[str, str] | None = None
+    ) -> str | None:
+        """
+        Format OOC strategic discussion summary for post-turn display.
+
+        Args:
+            messages: List of OOC messages from this turn
+            turn_number: Turn number to display
+            agent_names: Optional mapping of agent_id to agent_name
+
+        Returns:
+            Formatted string with header and message list, or None if no messages
+        """
+        if not messages:
+            return None
+
+        agent_names = agent_names or {}
+
+        lines = [
+            f"\n=== OOC Strategic Discussion (Turn {turn_number}) ==="
+        ]
+
+        for message in messages:
+            timestamp_str = message.timestamp.strftime("%H:%M:%S")
+            agent_name = agent_names.get(message.from_agent, message.from_agent)
+            lines.append(f"[{timestamp_str}] {agent_name} (Player): \"{message.content}\"")
+
+        return "\n".join(lines)
+
     def _humanize_phase_name(self, phase: GamePhase) -> str:
         """Convert GamePhase enum to human-readable name"""
         name_map = {
@@ -383,12 +464,16 @@ class DMCommandLineInterface:
         self.orchestrator = orchestrator
 
         # Session state
-        self._current_phase: GamePhase | None = GamePhase.DM_NARRATION  # Start at narration phase
+        self._current_phase: GamePhase | None = None  # Set to DM_NARRATION when turn starts
         self._turn_number: int = 1
         self._session_number: int = 1
         self._campaign_name: str = ""
         self._active_agents: list[dict] = []
         self._should_exit: bool = False
+
+        # Character ID to name mapping (loaded from config files)
+        self._character_names: dict[str, str] = {}
+        self._load_character_names()
 
     def handle_command(self, parsed: ParsedCommand) -> dict:
         """
@@ -639,15 +724,78 @@ class DMCommandLineInterface:
                             session_number=self._session_number
                         )
 
-                        # Display turn results
-                        print("\n--- Turn Results ---")
-                        print(f"Phase completed: {turn_result['phase_completed']}")
+                        # Handle interrupts - keep prompting DM until turn completes
+                        while turn_result.get("awaiting_dm_input"):
+                            awaiting_phase = turn_result.get("awaiting_phase")
+                            logger.info(
+                                f"Turn interrupted at {awaiting_phase}, prompting DM for input"
+                            )
 
-                        # Display character actions
-                        if turn_result.get("character_actions"):
-                            print("\nCharacter Actions:")
-                            for agent_id, action in turn_result["character_actions"].items():
-                                print(f"  {agent_id}: {action}")
+                            # Display character actions if available
+                            if turn_result.get("character_actions"):
+                                print("\nCharacter Actions:")
+                                strategic_intents = turn_result.get("strategic_intents", {})
+                                character_actions = turn_result["character_actions"]
+
+                                for char_id, action_text in character_actions.items():
+                                    # Get character name
+                                    char_name = self._get_character_name(char_id)
+
+                                    # Get directive text from strategic_intents
+                                    # Map character_id back to agent_id to get strategic intent
+                                    # For now, use a simple heuristic: find matching agent
+                                    directive_text = "Unknown directive"
+                                    for agent_id, intent_dict in strategic_intents.items():
+                                        # Intent dict should have strategic_goal field
+                                        if isinstance(intent_dict, dict):
+                                            directive_text = intent_dict.get(
+                                                "strategic_goal", str(intent_dict)
+                                            )
+                                        else:
+                                            directive_text = str(intent_dict)
+                                        break  # For MVP, assume single agent
+
+                                    # Display action with directive
+                                    print(f"\n{char_name}:")
+                                    print(f"  Player Directive: {directive_text}")
+                                    print(f"  Character Performance: {action_text}")
+
+                            # Prompt DM based on awaiting phase
+                            dm_input_result = self._prompt_for_dm_input_at_phase(awaiting_phase)
+
+                            if not dm_input_result["success"]:
+                                print(self.formatter.format_error(
+                                    error_type="InvalidInput",
+                                    message=dm_input_result.get("error", "Invalid input"),
+                                    suggestion=dm_input_result.get("suggestion")
+                                ))
+                                continue
+
+                            # Resume turn with DM input
+                            turn_result = self.orchestrator.resume_turn_with_dm_input(
+                                session_number=self._session_number,
+                                dm_input_type=dm_input_result["input_type"],
+                                dm_input_data=dm_input_result["data"]
+                            )
+
+                        # Display final turn results
+                        print("\n--- Turn Complete ---")
+                        print(f"Final phase: {turn_result['phase_completed']}")
+
+                        # Display character reactions if available
+                        if turn_result.get("character_reactions"):
+                            print("\nCharacter Reactions:")
+                            character_reactions = turn_result["character_reactions"]
+                            for char_id, reaction_text in character_reactions.items():
+                                # Get character name
+                                char_name = self._get_character_name(char_id)
+
+                                # Display reaction
+                                print(f"\n{char_name}:")
+                                print(f"  {reaction_text}")
+
+                        # Display OOC strategic discussion from this turn
+                        self._display_ooc_summary(turn_number=self._turn_number)
 
                         # Update current phase and increment turn counter
                         self._current_phase = GamePhase(turn_result['phase_completed'])
@@ -685,6 +833,107 @@ class DMCommandLineInterface:
                 print(error_output)
                 print(self.formatter.format_awaiting_dm_input(current_phase=self._current_phase))
 
+    def _load_character_names(self) -> None:
+        """
+        Load character configs to build character_id → character_name mapping.
+
+        Looks for character config files in config/personalities/ directory.
+        Populates self._character_names dict for use in formatters.
+        """
+        import json
+        from pathlib import Path
+
+        try:
+            config_dir = Path("config/personalities")
+            if not config_dir.exists():
+                logger.warning(f"Character config directory not found: {config_dir}")
+                return
+
+            # Load all character config files (char_*_character.json)
+            for config_file in config_dir.glob("char_*_character.json"):
+                try:
+                    with open(config_file) as f:
+                        character_config = json.load(f)
+                        character_id = character_config.get("character_id")
+                        character_name = character_config.get("name")
+
+                        if character_id and character_name:
+                            self._character_names[character_id] = character_name
+                            logger.debug(
+                                f"Loaded character name: {character_id} → {character_name}"
+                            )
+                except Exception as e:
+                    logger.warning(f"Failed to load character config {config_file}: {e}")
+
+            logger.info(f"Loaded {len(self._character_names)} character names from configs")
+
+        except Exception as e:
+            logger.error(f"Failed to load character names: {e}")
+
+    def _get_character_name(self, character_id: str) -> str:
+        """
+        Get character name from character_id, falling back to ID if not found.
+
+        Args:
+            character_id: Character identifier (e.g., "char_zara_001")
+
+        Returns:
+            Character name if found, otherwise character_id
+        """
+        return self._character_names.get(character_id, character_id)
+
+    def _display_ooc_summary(self, turn_number: int, router: MessageRouter | None = None) -> None:
+        """
+        Display OOC strategic discussion from the completed turn.
+
+        Fetches OOC messages via MessageRouter and formats for display.
+
+        Args:
+            turn_number: Turn number to fetch messages for
+            router: Optional MessageRouter instance (creates new if None)
+        """
+        # Create router if not provided
+        if router is None:
+            try:
+                settings = get_settings()
+                redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
+                router = MessageRouter(redis_client)
+            except Exception as e:
+                logger.warning(f"Could not create MessageRouter for OOC summary: {e}")
+                return
+
+        # Fetch OOC messages for this turn
+        try:
+            all_messages = router.get_ooc_messages_for_player(limit=100)
+
+            # Filter to current turn only
+            turn_messages = [
+                msg for msg in all_messages
+                if msg.turn_number == turn_number
+            ]
+
+            if not turn_messages:
+                # No OOC messages for this turn - don't display section
+                return
+
+            # Build agent_id -> agent_name mapping
+            # For now, use simple mapping from active_agents
+            agent_names = {}
+            # TODO: Load from config or use self._character_names mapping
+
+            # Format and display summary
+            summary = self.formatter.format_ooc_summary(
+                turn_messages,
+                turn_number=turn_number,
+                agent_names=agent_names
+            )
+
+            if summary:
+                print(summary)
+
+        except Exception as e:
+            logger.warning(f"Failed to display OOC summary: {e}")
+
     def _get_command_suggestion(self, user_input: str) -> str | None:
         """Get helpful suggestion based on failed command"""
         if "/roll" in user_input.lower():
@@ -693,6 +942,135 @@ class DMCommandLineInterface:
             return "Try: success, fail, or /roll <dice>"
         else:
             return "Available commands: narrate text, /roll <dice>, success, fail, /info, /quit"
+
+    def _prompt_for_dm_input_at_phase(self, awaiting_phase: str) -> dict:
+        """
+        Prompt DM for input based on which phase is waiting.
+
+        Args:
+            awaiting_phase: The phase that's waiting for DM input
+
+        Returns:
+            Dict with success, input_type, and data fields
+        """
+        if awaiting_phase == "dm_adjudication":
+            # Prompt for adjudication
+            print("\n=== DM Adjudication Required ===")
+            print("Commands: success, fail, or /roll <dice>")
+            print(self.formatter.format_awaiting_dm_input(
+                current_phase=GamePhase.DM_ADJUDICATION,
+                expected_command_types=["success", "fail", "/roll"]
+            ))
+
+            # Read DM input
+            user_input = input().strip()
+
+            if not user_input:
+                return {
+                    "success": False,
+                    "error": "Empty input",
+                    "suggestion": "Use: success, fail, or /roll <dice>"
+                }
+
+            # Parse command
+            try:
+                parsed = self.parser.parse(user_input)
+            except InvalidCommandError as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "suggestion": "Use: success, fail, or /roll <dice>"
+                }
+
+            # Handle based on command type
+            if parsed.command_type == DMCommandType.SUCCESS:
+                return {
+                    "success": True,
+                    "input_type": "adjudication",
+                    "data": {
+                        "needs_dice": False,
+                        "dice_override": None,
+                        "manual_success": True  # DM ruled success
+                    }
+                }
+
+            elif parsed.command_type == DMCommandType.FAIL:
+                return {
+                    "success": True,
+                    "input_type": "adjudication",
+                    "data": {
+                        "needs_dice": False,
+                        "dice_override": None,
+                        "manual_success": False  # DM ruled failure
+                    }
+                }
+
+            elif parsed.command_type == DMCommandType.ROLL:
+                # Execute the roll
+                notation = parsed.args["notation"]
+                try:
+                    dice_result = roll_dice(notation)
+                    print(self.formatter.format_dice_roll(
+                        notation=dice_result.notation,
+                        individual_rolls=dice_result.individual_rolls,
+                        total=dice_result.total,
+                        modifier=dice_result.modifier
+                    ))
+
+                    return {
+                        "success": True,
+                        "input_type": "adjudication",
+                        "data": {
+                            "needs_dice": True,
+                            "dice_override": dice_result.total
+                        }
+                    }
+                except ValueError as e:
+                    return {
+                        "success": False,
+                        "error": f"Invalid dice notation: {e}",
+                        "suggestion": "Use format like: /roll 1d6, /roll 2d6+3"
+                    }
+
+            else:
+                return {
+                    "success": False,
+                    "error": f"Invalid command for adjudication: {parsed.command_type}",
+                    "suggestion": "Use: success, fail, or /roll <dice>"
+                }
+
+        elif awaiting_phase == "dm_outcome":
+            # Prompt for outcome narration
+            print("\n=== DM Outcome Narration Required ===")
+            print("Describe what happens as a result of the action.")
+            print(self.formatter.format_awaiting_dm_input(
+                current_phase=GamePhase.DM_OUTCOME
+            ))
+
+            # Read DM narration
+            user_input = input().strip()
+
+            if not user_input:
+                return {
+                    "success": False,
+                    "error": "Empty outcome narration",
+                    "suggestion": "Describe what happens as a result"
+                }
+
+            return {
+                "success": True,
+                "input_type": "outcome",
+                "data": {
+                    "outcome_text": user_input
+                }
+            }
+
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown phase waiting for input: {awaiting_phase}",
+                "suggestion": None
+            }
 
 
 # ============================================================================

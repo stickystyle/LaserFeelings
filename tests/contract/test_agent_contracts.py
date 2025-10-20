@@ -1,18 +1,16 @@
 # ABOUTME: Contract tests for BasePersonaAgent and CharacterAgent interfaces (T028-T029).
 # ABOUTME: Tests verify interface compliance with agent_interface.yaml contract specifications.
 
-import pytest
 from datetime import datetime
-from typing import Protocol
+
+import pytest
 
 # These imports will fail until implementations exist (TDD phase)
 from src.agents.base_persona import BasePersonaAgent
 from src.agents.character import CharacterAgent
-
-from src.models.personality import PlayerPersonality, CharacterSheet, CharacterStyle, CharacterRole
-from src.models.messages import Message, MessageChannel, MessageType
 from src.models.game_state import GamePhase
-
+from src.models.messages import Message, MessageChannel, MessageType
+from src.models.personality import CharacterRole, CharacterSheet, CharacterStyle, PlayerPersonality
 
 # --- Test Fixtures ---
 
@@ -124,7 +122,8 @@ class TestBasePersonaAgentInterface:
         """Verify participate_in_ooc_discussion method exists with correct signature"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            character_number=3
         )
 
         # Method must exist
@@ -135,7 +134,8 @@ class TestBasePersonaAgentInterface:
         """Verify formulate_strategic_intent method exists with correct signature"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            character_number=3
         )
 
         # Method must exist
@@ -146,7 +146,8 @@ class TestBasePersonaAgentInterface:
         """Verify create_character_directive method exists with correct signature"""
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            character_number=3
         )
 
         # Method must exist
@@ -163,7 +164,8 @@ class TestBasePersonaAgentInterface:
         mock_graphiti_client
     ):
         """Verify participate_in_ooc_discussion returns Message object"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
         from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
         # Create mock memory
@@ -173,6 +175,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             memory=mock_memory,
             openai_client=mock_openai_client
         )
@@ -199,7 +202,8 @@ class TestBasePersonaAgentInterface:
         mock_graphiti_client
     ):
         """Verify agent queries memory before participating (behavioral requirement)"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
         from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
         # Create mock memory
@@ -209,6 +213,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             memory=mock_memory,
             openai_client=mock_openai_client
         )
@@ -235,7 +240,8 @@ class TestBasePersonaAgentInterface:
         mock_graphiti_client
     ):
         """Verify cautious personality affects response (risk_tolerance=0.2)"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
         from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
         # Create mock memory
@@ -245,6 +251,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             memory=mock_memory,
             openai_client=mock_openai_client
         )
@@ -274,7 +281,8 @@ class TestBasePersonaAgentInterface:
         mock_graphiti_client
     ):
         """Verify player layer MUST NOT narrate in-character actions"""
-        from unittest.mock import MagicMock, AsyncMock
+        from unittest.mock import AsyncMock, MagicMock
+
         from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
         # Create mock memory
@@ -284,6 +292,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             memory=mock_memory,
             openai_client=mock_openai_client
         )
@@ -315,6 +324,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -342,6 +352,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -366,6 +377,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -388,6 +400,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -422,6 +435,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -464,6 +478,7 @@ class TestBasePersonaAgentInterface:
         agent = BasePersonaAgent(
             agent_id="agent_test",
             personality=cautious_personality,
+            character_number=3,
             openai_client=mock_openai_client
         )
 
@@ -481,6 +496,103 @@ class TestBasePersonaAgentInterface:
 
         # Should have emotional tone field
         assert hasattr(result, "emotional_tone")
+
+    def test_base_persona_has_character_number(self, cautious_personality):
+        """Verify BasePersonaAgent requires character_number for mechanics awareness"""
+        agent = BasePersonaAgent(
+            agent_id="agent_test",
+            personality=cautious_personality,
+            character_number=2
+        )
+
+        # Must store character number
+        assert hasattr(agent, "character_number")
+        assert agent.character_number == 2
+
+    def test_base_persona_validates_character_number_range(self, cautious_personality):
+        """Verify character_number must be in valid range (2-5)"""
+        # Valid numbers should work
+        for num in [2, 3, 4, 5]:
+            agent = BasePersonaAgent(
+                agent_id="agent_test",
+                personality=cautious_personality,
+                character_number=num
+            )
+            assert agent.character_number == num
+
+        # Invalid numbers should raise ValueError
+        with pytest.raises(ValueError, match="Character number must be 2-5"):
+            BasePersonaAgent(
+                agent_id="agent_test",
+                personality=cautious_personality,
+                character_number=1
+            )
+
+        with pytest.raises(ValueError, match="Character number must be 2-5"):
+            BasePersonaAgent(
+                agent_id="agent_test",
+                personality=cautious_personality,
+                character_number=6
+            )
+
+    def test_base_persona_has_mechanics_context_method(self, cautious_personality):
+        """Verify BasePersonaAgent has helper method for building mechanics context"""
+        agent = BasePersonaAgent(
+            agent_id="agent_test",
+            personality=cautious_personality,
+            character_number=3
+        )
+
+        # Must have helper method
+        assert hasattr(agent, "_build_mechanics_context")
+        assert callable(agent._build_mechanics_context)
+
+        # Method should return string with mechanics info
+        mechanics = agent._build_mechanics_context()
+        assert isinstance(mechanics, str)
+        assert len(mechanics) > 0
+        assert "LASERS" in mechanics
+        assert "FEELINGS" in mechanics
+
+    @pytest.mark.asyncio
+    async def test_participate_includes_mechanics_in_prompt(
+        self,
+        cautious_personality,
+        sample_dm_narration,
+        sample_ooc_messages,
+        mock_openai_client,
+        mock_graphiti_client
+    ):
+        """Verify player layer receives game mechanics knowledge (FR-008 compliance)"""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from src.memory.corrupted_temporal import CorruptedTemporalMemory
+
+        # Create mock memory
+        mock_memory = MagicMock(spec=CorruptedTemporalMemory)
+        mock_memory.search = AsyncMock(return_value=[])
+
+        # Create agent with specific number for testing
+        agent = BasePersonaAgent(
+            agent_id="agent_test",
+            personality=cautious_personality,
+            character_number=2,  # LASERS specialist
+            memory=mock_memory,
+            openai_client=mock_openai_client
+        )
+
+        result = await agent.participate_in_ooc_discussion(
+            dm_narration=sample_dm_narration,
+            other_messages=sample_ooc_messages
+        )
+
+        # Player layer should have been given mechanics knowledge
+        # We can't directly inspect the system prompt, but we can verify
+        # the agent has the capability via the helper method
+        mechanics = agent._build_mechanics_context()
+        assert "Your character's number: 2" in mechanics
+        assert "17%" in mechanics or "16%" in mechanics  # LASERS success rate
+        assert "67%" in mechanics or "66%" in mechanics  # FEELINGS success rate
 
 
 # --- T029: CharacterAgent Interface Tests ---
@@ -540,9 +652,9 @@ class TestCharacterAgentInterface:
 
         # Must return Action with required fields per contract
         assert hasattr(result, "character_id")
-        assert hasattr(result, "action_text")
+        assert hasattr(result, "narrative_text")
         assert result.character_id == "char_thrain"
-        assert len(result.action_text) > 0
+        assert len(result.narrative_text) > 0
 
     @pytest.mark.asyncio
     async def test_action_expresses_intent_only(
@@ -572,7 +684,7 @@ class TestCharacterAgentInterface:
             scene_context=scene_context
         )
 
-        action_lower = result.action_text.lower()
+        action_lower = result.narrative_text.lower()
 
         # Should express intent with language like "attempt", "try"
         intent_indicators = ["attempt", "try", "tries to", "aims to", "seeks to"]
@@ -597,7 +709,7 @@ class TestCharacterAgentInterface:
         has_forbidden = any(phrase in action_lower for phrase in forbidden_outcomes)
 
         assert not has_forbidden, \
-            f"Action must not narrate outcomes, found forbidden language in: {result.action_text}"
+            f"Action must not narrate outcomes, found forbidden language in: {result.narrative_text}"
 
     @pytest.mark.asyncio
     async def test_action_uses_character_voice(
@@ -630,46 +742,11 @@ class TestCharacterAgentInterface:
         # Thrain's speech patterns include "says 'lad' frequently"
         # This is a behavioral requirement: MUST use character speech patterns
         # Note: Due to LLM variance, we check for character-appropriate language
-        action_text = result.action_text.lower()
+        narrative_text = result.narrative_text.lower()
 
         # Should reflect character traits (engineer, formal, technical)
         # Even if "lad" isn't present, should have formal/technical tone
-        assert len(result.action_text) > 0
-        # Full validation requires checking dialogue field if present
-        if hasattr(result, "dialogue") and result.dialogue:
-            # If dialogue exists, it should reflect personality
-            assert len(result.dialogue) > 0
-
-    @pytest.mark.asyncio
-    async def test_action_includes_mannerisms(
-        self,
-        thrain_character,
-        mock_openai_client
-    ):
-        """Verify action SHOULD add character mannerisms"""
-        agent = CharacterAgent(
-            character_id="char_thrain",
-            character_sheet=thrain_character,
-            openai_client=mock_openai_client
-        )
-
-        from src.models.agent_actions import Directive
-        directive = Directive(
-            from_player="agent_test",
-            to_character="char_thrain",
-            instruction="Think about the problem",
-            emotional_tone="thoughtful"
-        )
-
-        scene_context = "You examine the puzzle"
-
-        result = await agent.perform_action(
-            directive=directive,
-            scene_context=scene_context
-        )
-
-        # Should have mannerisms field (Thrain taps fingers when thinking)
-        assert hasattr(result, "mannerisms")
+        assert len(result.narrative_text) > 0
 
     @pytest.mark.asyncio
     async def test_react_returns_reaction_object(
@@ -699,9 +776,9 @@ class TestCharacterAgentInterface:
 
         # Must return Reaction with required fields per contract
         assert hasattr(result, "character_id")
-        assert hasattr(result, "reaction_text")
+        assert hasattr(result, "narrative_text")
         assert result.character_id == "char_thrain"
-        assert len(result.reaction_text) > 0
+        assert len(result.narrative_text) > 0
 
     @pytest.mark.asyncio
     async def test_reaction_no_new_actions(
@@ -731,7 +808,7 @@ class TestCharacterAgentInterface:
         )
 
         # Reaction should express emotion, not declare new actions
-        reaction_lower = result.reaction_text.lower()
+        reaction_lower = result.narrative_text.lower()
 
         # Forbidden new action declarations
         forbidden_actions = [
@@ -745,36 +822,6 @@ class TestCharacterAgentInterface:
         for phrase in forbidden_actions:
             assert phrase not in reaction_lower, \
                 f"Reaction must not initiate new actions, found: {phrase}"
-
-    @pytest.mark.asyncio
-    async def test_reaction_indicates_next_intent(
-        self,
-        thrain_character,
-        mock_openai_client
-    ):
-        """Verify reaction SHOULD indicate next desired action"""
-        agent = CharacterAgent(
-            character_id="char_thrain",
-            character_sheet=thrain_character,
-            openai_client=mock_openai_client
-        )
-
-        dm_narration = "The door opens to reveal a long corridor."
-
-        from src.models.agent_actions import EmotionalState, PrimaryEmotion
-        emotional_state = EmotionalState(
-            primary_emotion=PrimaryEmotion.SURPRISE,
-            intensity=0.7,
-            secondary_emotions=["curiosity"]
-        )
-
-        result = await agent.react_to_outcome(
-            dm_narration=dm_narration,
-            emotional_state=emotional_state
-        )
-
-        # Should have next_intent field
-        assert hasattr(result, "next_intent")
 
     @pytest.mark.asyncio
     async def test_reaction_reflects_emotional_state(
@@ -803,12 +850,26 @@ class TestCharacterAgentInterface:
         )
 
         # High-intensity fear should be reflected in reaction
-        reaction_lower = result.reaction_text.lower()
+        reaction_lower = result.narrative_text.lower()
         fear_indicators = ["alarm", "fear", "panic", "worry", "concern", "shocked", "startled"]
 
         # Strong emotion should show in text
-        assert len(result.reaction_text) > 0
+        assert len(result.narrative_text) > 0
         # (Full validation would check sentiment analysis)
+
+    def test_character_agent_no_mechanics_knowledge(self, thrain_character):
+        """Verify CharacterAgent does NOT have mechanics knowledge (maintains player/character separation per FR-008)"""
+        agent = CharacterAgent(
+            character_id="char_thrain",
+            character_sheet=thrain_character
+        )
+
+        # Character layer should NOT have mechanics helper method
+        assert not hasattr(agent, "_build_mechanics_context")
+
+        # Character layer should NOT have character_number as direct attribute
+        # (it's in character_sheet.number, but not exposed for mechanics awareness)
+        assert not hasattr(agent, "character_number")
 
 
 # --- Error Handling Tests ---
@@ -819,20 +880,19 @@ class TestAgentErrorHandling:
     @pytest.mark.asyncio
     async def test_participate_raises_llm_call_failed(self, cautious_personality):
         """Verify LLMCallFailed error raised when OpenAI fails"""
-        from src.agents.exceptions import LLMCallFailed
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
         # When implementing, mock LLM to fail and verify exception is raised
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            character_number=3
         )
 
     @pytest.mark.asyncio
     async def test_perform_action_raises_validation_failed(self, thrain_character):
         """Verify ValidationFailed error raised on narrative overreach"""
-        from src.agents.exceptions import ValidationFailed
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
@@ -845,7 +905,6 @@ class TestAgentErrorHandling:
     @pytest.mark.asyncio
     async def test_perform_action_raises_max_retries_exceeded(self, thrain_character):
         """Verify MaxRetriesExceeded error raised after 3 validation failures"""
-        from src.agents.exceptions import MaxRetriesExceeded
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
@@ -858,12 +917,12 @@ class TestAgentErrorHandling:
     @pytest.mark.asyncio
     async def test_formulate_intent_raises_no_consensus(self, cautious_personality):
         """Verify NoConsensusReached error when discussion lacks direction"""
-        from src.agents.exceptions import NoConsensusReached
 
         # This test will fail until implementation properly raises exceptions
         # That's correct for TDD!
         # When implementing, provide incoherent discussion and verify exception
         agent = BasePersonaAgent(
             agent_id="agent_test",
-            personality=cautious_personality
+            personality=cautious_personality,
+            character_number=3
         )
