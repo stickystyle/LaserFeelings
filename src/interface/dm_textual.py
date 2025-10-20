@@ -2,6 +2,7 @@
 # ABOUTME: Provides dual-panel layout with game log and OOC strategic discussion.
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from loguru import logger
 from textual.app import App, ComposeResult
@@ -89,6 +90,9 @@ class DMTextualInterface(App):
         self.router = router
         self.parser = DMCommandParser()
 
+        # Thread pool for running blocking orchestrator calls
+        self._executor = ThreadPoolExecutor(max_workers=2)
+
         # Session state
         self.session_number = 1
         self._campaign_name = "Unknown Campaign"
@@ -101,6 +105,19 @@ class DMTextualInterface(App):
         self._clarification_mode = False
         self._pending_questions = None  # List of question dicts
         self._questions_round = 1
+
+    async def _run_blocking_call(self, func):
+        """
+        Run a blocking callable in thread pool without blocking the event loop.
+
+        Args:
+            func: Blocking callable to run (use lambda to wrap with args)
+
+        Returns:
+            Result from func
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self._executor, func)
 
     def compose(self) -> ComposeResult:
         """Create layout with dual-panel view"""
@@ -288,12 +305,14 @@ class DMTextualInterface(App):
                 self._clarification_mode = False
                 self._pending_questions = None
 
-                # Call orchestrator to skip remaining clarification
+                # Call orchestrator to skip remaining clarification (run in background thread)
                 try:
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="dm_clarification_answer",
-                        dm_input_data={"answers": [], "force_finish": True},
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="dm_clarification_answer",
+                            dm_input_data={"answers": [], "force_finish": True},
+                        )
                     )
                     if result and "phase_completed" in result:
                         self.current_phase = GamePhase(result["phase_completed"])
@@ -344,14 +363,17 @@ class DMTextualInterface(App):
                 )
 
                 # Call orchestrator to record answer (single answer at a time)
+                # Run in background thread to keep UI responsive
                 try:
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="dm_clarification_answer",
-                        dm_input_data={
-                            "answers": [{"agent_id": agent_id, "answer": answer_text}],
-                            "force_finish": False,
-                        },
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="dm_clarification_answer",
+                            dm_input_data={
+                                "answers": [{"agent_id": agent_id, "answer": answer_text}],
+                                "force_finish": False,
+                            },
+                        )
                     )
 
                     # Simply show success - don't poll for new questions yet
@@ -391,15 +413,17 @@ class DMTextualInterface(App):
             self._current_roll_suggestion = None  # Clear after handling
 
             if user_input.lower() == "accept":
-                # Accept the suggested roll - let dice resolution proceed
+                # Accept the suggested roll - let dice resolution proceed (run in background)
                 try:
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="adjudication",
-                        dm_input_data={
-                            "needs_dice": True,
-                            # No dice_override - use natural roll
-                        },
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="adjudication",
+                            dm_input_data={
+                                "needs_dice": True,
+                                # No dice_override - use natural roll
+                            },
+                        )
                     )
 
                     self.write_game_log(
@@ -415,15 +439,17 @@ class DMTextualInterface(App):
                     logger.error(f"Roll execution failed: {e}")
 
             elif user_input.lower() == "success":
-                # Force success - bypass dice entirely
+                # Force success - bypass dice entirely (run in background)
                 try:
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="adjudication",
-                        dm_input_data={
-                            "needs_dice": False,
-                            "manual_success": True,
-                        },
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="adjudication",
+                            dm_input_data={
+                                "needs_dice": False,
+                                "manual_success": True,
+                            },
+                        )
                     )
 
                     self.write_game_log(
@@ -439,15 +465,17 @@ class DMTextualInterface(App):
                     logger.error(f"Force success failed: {e}")
 
             elif user_input.lower() == "fail":
-                # Force failure - bypass dice entirely
+                # Force failure - bypass dice entirely (run in background)
                 try:
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="adjudication",
-                        dm_input_data={
-                            "needs_dice": False,
-                            "manual_success": False,
-                        },
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="adjudication",
+                            dm_input_data={
+                                "needs_dice": False,
+                                "manual_success": False,
+                            },
+                        )
                     )
 
                     self.write_game_log(
@@ -488,14 +516,16 @@ class DMTextualInterface(App):
                     if dice_value < 1 or dice_value > 6:
                         raise ValueError("Dice value must be between 1 and 6")
 
-                    # Execute with dice override
-                    result = self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="adjudication",
-                        dm_input_data={
-                            "needs_dice": True,
-                            "dice_override": dice_value,
-                        },
+                    # Execute with dice override (run in background)
+                    result = await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="adjudication",
+                            dm_input_data={
+                                "needs_dice": True,
+                                "dice_override": dice_value,
+                            },
+                        )
                     )
 
                     self.write_game_log(
