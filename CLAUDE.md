@@ -35,6 +35,57 @@ The system enforces strict message routing via `MessageRouter` (`src/orchestrati
 - **OOC (out_of_character)**: Player strategy discussions - only players see this
 - **P2C (player_to_character)**: Private directives from player to their character - only target character sees
 
+### Clarifying Questions Phase
+
+The system allows AI players to ask the DM clarifying questions after narration before formulating strategy. This mimics real TTRPG gameplay where players ask "How far away is the door?" or "Do I see any guards?"
+
+**Turn Flow with Clarification**:
+```
+DM_NARRATION → Initial narration
+  ↓
+MEMORY_QUERY → Players query memories based on narration
+  ↓
+DM_CLARIFICATION_COLLECT → Players formulate questions (no interrupt)
+  ├─ No questions → skip to SECOND_MEMORY_QUERY
+  └─ Questions exist → route to DM_CLARIFICATION_WAIT
+      ↓
+DM_CLARIFICATION_WAIT → Pause for DM to answer (interrupt)
+  ├─ DM answers → loop back to COLLECT (for follow-ups)
+  └─ Max 3 rounds or DM types "finish" → proceed
+  ↓
+SECOND_MEMORY_QUERY → Re-query memories with narration + clarifications
+  ↓
+STRATEGIC_INTENT → Players formulate strategy (now fully informed)
+```
+
+**Key Features**:
+- **Automatic**: Players automatically decide if they need clarification via LLM
+- **Multi-round**: Up to 3 rounds of Q&A to allow follow-up questions
+- **Optional**: If no players have questions, phase is skipped automatically
+- **Public**: All questions and answers visible on OOC channel to all players
+- **DM Control**: DM can force finish to skip remaining rounds
+
+**CLI Interaction**:
+```
+=== Player Clarifying Questions (Round 1) ===
+
+New questions this round:
+  [1] Alex: "Are there any guards visible?"
+  [2] Alex: "What's the range of the plasma cannon?"
+
+Answer questions one at a time using format: <number> <answer>
+> 1 Yes, two guards at the far end
+✓ Answer recorded for Alex
+> 2 About 50 meters
+✓ Answer recorded for Alex
+> done
+
+✓ 2 answer(s) recorded. Checking for follow-up questions...
+```
+
+**Memory Integration (Option B)**:
+After clarifications, players re-query their memories because DM's answers might trigger new memories (e.g., "Section 7" might remind them of a past incident in Section 7). This implements the "Option B" design for thorough memory retrieval.
+
 ### Worker Pattern (RQ + Redis)
 
 Agent methods run as **module-level functions** in separate processes via RQ workers:
@@ -106,6 +157,9 @@ uv run ruff check --fix .
 
 # Check specific paths
 uv run ruff check src/agents/ tests/
+
+# Auto-fix formatting
+uv run ruff format
 ```
 
 ### Infrastructure

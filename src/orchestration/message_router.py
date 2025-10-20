@@ -37,6 +37,23 @@ class MessageRouter:
         self.redis = redis_client
         self.message_ttl = 86400  # 24 hours
 
+    # Channel visibility rules (declarative documentation)
+    VISIBILITY_RULES = {
+        MessageChannel.IC: {
+            "characters": True,
+            "base_personas": "summary_only"
+        },
+        MessageChannel.OOC: {
+            "characters": False,
+            "base_personas": True,
+            "dm": True  # DM answers clarifying questions visible to all players
+        },
+        MessageChannel.P2C: {
+            "characters": "recipient_only",
+            "base_personas": False
+        }
+    }
+
     def route_message(self, message: Message) -> dict:
         """
         Route message to appropriate channels based on visibility rules.

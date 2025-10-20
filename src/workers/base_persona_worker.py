@@ -151,6 +151,10 @@ def formulate_strategic_intent(
         # Initialize OpenAI client
         openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+        # TODO(Phase 4): Accept memory as parameter from orchestration layer
+        # For Phase 3 MVP, agents operate without memory to avoid connection pool exhaustion
+        memory = None
+
         # Load agent personality from configuration
         personality = PlayerPersonality(**personality_config)
 
@@ -159,6 +163,7 @@ def formulate_strategic_intent(
             agent_id=agent_id,
             personality=personality,
             character_number=character_number,
+            memory=memory,
             openai_client=openai_client,
             model="gpt-4o",
             temperature=0.7,
@@ -234,6 +239,10 @@ def create_character_directive(
         # Initialize OpenAI client
         openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+        # TODO(Phase 4): Accept memory as parameter from orchestration layer
+        # For Phase 3 MVP, agents operate without memory to avoid connection pool exhaustion
+        memory = None
+
         # Load agent personality from configuration
         personality = PlayerPersonality(**personality_config)
 
@@ -242,6 +251,7 @@ def create_character_directive(
             agent_id=agent_id,
             personality=personality,
             character_number=character_number,
+            memory=memory,
             openai_client=openai_client,
             model="gpt-4o",
             temperature=0.7,
@@ -285,4 +295,106 @@ def create_character_directive(
 
     except Exception as e:
         logger.error(f"Worker create_character_directive failed for {agent_id}: {e}")
+        raise
+
+
+def formulate_clarifying_question(
+    agent_id: str,
+    dm_narration: str,
+    retrieved_memories: list[dict[str, Any]],
+    prior_qa_messages: list[dict[str, Any]],
+    personality_config: dict[str, Any],
+    character_number: int,
+) -> dict[str, Any] | None:
+    """
+    RQ worker function: BasePersonaAgent formulates clarifying question for DM.
+
+    Worker pattern: Imports agent class inside function (runs in separate process).
+    Uses exponential backoff for LLM calls via @llm_retry decorator.
+
+    Args:
+        agent_id: Unique agent identifier
+        dm_narration: DM's scene description for this turn
+        retrieved_memories: List of relevant memories from graph query
+            Each memory dict has: {fact, confidence, timestamp, ...}
+        prior_qa_messages: Serialized OOC messages from dm_clarification phase
+            Each message dict has: {from_agent, content, timestamp, channel, ...}
+        personality_config: Personality configuration dict with keys:
+            {decision_style, risk_tolerance, cooperativeness, analytical_score, roleplay_intensity}
+        character_number: Character's Lasers & Feelings number (2-5) for mechanics awareness
+
+    Returns:
+        dict with {"question": str, "reasoning": str} if player has question
+        None if no question needed
+
+    Raises:
+        RuntimeError: When agent cannot be loaded or initialized
+        LLMCallFailed: When OpenAI API fails after retries
+    """
+    # Import dependencies inside worker (separate process)
+    import asyncio
+
+    from openai import AsyncOpenAI
+
+    from src.agents.base_persona import BasePersonaAgent
+    from src.config.settings import Settings
+    from src.models.messages import Message
+    from src.models.personality import PlayerPersonality
+    from src.workers.llm_retry import llm_retry
+
+    try:
+        # Load configuration
+        settings = Settings()
+
+        # Initialize OpenAI client
+        openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+        # TODO(Phase 4): Accept memory as parameter from orchestration layer
+        # For Phase 3 MVP, agents operate without memory to avoid connection pool exhaustion
+        memory = None
+
+        # Load agent personality from configuration
+        personality = PlayerPersonality(**personality_config)
+
+        # Initialize agent
+        agent = BasePersonaAgent(
+            agent_id=agent_id,
+            personality=personality,
+            character_number=character_number,
+            memory=memory,
+            openai_client=openai_client,
+            model="gpt-4o",
+            temperature=0.7,
+        )
+
+        # Convert prior_qa_messages dicts to Message objects
+        message_objects = []
+        for msg_dict in prior_qa_messages:
+            try:
+                msg = Message(**msg_dict)
+                message_objects.append(msg)
+            except Exception as e:
+                logger.warning(f"Failed to parse message dict: {e}")
+                continue
+
+        # Call agent method with retry protection
+        @llm_retry
+        async def _formulate() -> dict | None:
+            return await agent.formulate_clarifying_question(
+                dm_narration=dm_narration,
+                retrieved_memories=retrieved_memories,
+                prior_qa=message_objects,
+            )
+
+        # Run async function in event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_formulate())
+            return result  # dict or None
+        finally:
+            loop.close()
+
+    except Exception as e:
+        logger.error(f"Worker formulate_clarifying_question failed for {agent_id}: {e}")
         raise

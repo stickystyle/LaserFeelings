@@ -195,6 +195,306 @@ def memory_retrieval_node(state: GameState) -> GameState:
     }
 
 
+def second_memory_query_node(state: GameState) -> GameState:
+    """
+    Re-query memories after clarifications to capture memories triggered by Q&A.
+
+    This is Option B from the design: After DM answers clarifying questions,
+    players query memories again using both the original narration AND the
+    clarifications as context. This catches cases where clarifications reveal
+    new details (e.g., "Section 7") that trigger previously-missed memories.
+
+    Args:
+        state: Current game state
+
+    Returns:
+        Updated state with retrieved_memories_post_clarification populated
+
+    Note:
+        For Phase 3 MVP, returns empty memories to avoid breaking downstream phases.
+        Full memory integration will be completed in Phase 3 memory tasks (T028-T037).
+
+        In production, this would:
+        1. Use enhanced_query_context to query Graphiti
+        2. Retrieve memories that match clarification details (e.g., "Section 7")
+        3. Merge with original retrieved_memories to avoid duplicates
+    """
+    logger.info(f"[PHASE: SECOND_MEMORY_QUERY] Turn {state['turn_number']}")
+
+    # Build enhanced query context from narration + clarifications
+    # This will be used when memory system is integrated
+    base_narration = state["dm_narration"]
+
+    # Fetch all OOC messages from dm_clarification phase
+    # Note: router is read-only here, so we can access it directly
+    # In full implementation, this would be injected via factory pattern
+    # For MVP, we'll prepare the context but not use it yet
+    clarification_text = ""
+    clarification_messages_count = 0
+
+    # Get clarification messages from state if available
+    if "all_clarification_questions" in state:
+        clarification_questions = state["all_clarification_questions"]
+        clarification_messages_count = len(clarification_questions)
+        clarification_text = "\n".join([
+            f"{q.get('agent_id', 'unknown')}: {q.get('question', '')}"
+            for q in clarification_questions
+        ])
+
+    enhanced_query_context = f"{base_narration}\n\nClarifications:\n{clarification_text}"
+
+    logger.debug(
+        f"Built enhanced query context with {clarification_messages_count} clarification messages "
+        f"(context length: {len(enhanced_query_context)} chars)"
+    )
+
+    # MVP placeholder - return empty memories for all agents
+    # TODO(Phase 3): Integrate with CorruptedTemporalMemory when memory system is ready
+    retrieved_memories_post_clarification: dict[str, list[dict]] = {
+        agent_id: [] for agent_id in state.get("active_agents", [])
+    }
+
+    logger.debug(
+        f"Re-queried memories for {len(retrieved_memories_post_clarification)} agents "
+        f"with clarification context (MVP: empty)"
+    )
+
+    return {
+        **state,
+        "retrieved_memories_post_clarification": retrieved_memories_post_clarification,
+        "current_phase": GamePhase.STRATEGIC_INTENT.value,
+        "phase_start_time": datetime.now()
+    }
+
+
+def _create_dm_clarification_collect_node(
+    base_persona_queue: Queue,
+    router: MessageRouter
+):
+    """
+    Factory for dm_clarification_collect_node - collects questions without interrupting.
+
+    This node dispatches RQ jobs to collect clarifying questions from all players.
+    If questions exist, routes to dm_clarification_wait (which interrupts).
+    If no questions, proceeds to second_memory_query.
+
+    Args:
+        base_persona_queue: RQ Queue for base persona worker jobs
+        router: MessageRouter for sending OOC messages
+
+    Returns:
+        Node function with captured dependencies
+    """
+    # Constants for clarification loop
+    MAX_CLARIFICATION_ROUNDS = 3  # Safety limit to prevent infinite loops
+
+    def dm_clarification_collect_node(state: GameState) -> GameState:
+        """
+        Collect clarifying questions from players (non-interrupting).
+
+        Dispatches RQ jobs to all players to formulate questions.
+        Routes questions to OOC channel.
+        Returns state with phase set based on whether questions exist:
+        - Questions exist: current_phase = DM_CLARIFICATION (routes to wait node)
+        - No questions: current_phase = MEMORY_QUERY (skips wait node)
+        """
+        logger.info(f"[PHASE: DM_CLARIFICATION] Turn {state['turn_number']}")
+
+        # Initialize clarification round tracking
+        current_round = state.get("clarification_round", 1)
+        logger.debug(f"Clarification round {current_round}/{MAX_CLARIFICATION_ROUNDS}")
+
+        # Check max rounds exit condition
+        if current_round > MAX_CLARIFICATION_ROUNDS:
+            logger.info(f"Max clarification rounds ({MAX_CLARIFICATION_ROUNDS}) reached - proceeding to memory query")
+            return {
+                **state,
+                "current_phase": GamePhase.MEMORY_QUERY.value,
+                "clarification_round": current_round,
+                "phase_start_time": datetime.now()
+            }
+
+        # Gather prior Q&A context from OOC channel
+        prior_qa_context = router.get_ooc_messages_for_player(limit=100)
+        prior_qa_this_turn = [
+            msg for msg in prior_qa_context
+            if (msg.phase == GamePhase.DM_CLARIFICATION.value and
+                msg.turn_number == state["turn_number"])
+        ]
+
+        logger.debug(f"Found {len(prior_qa_this_turn)} prior Q&A messages from this turn")
+
+        # Dispatch RQ jobs to all players to formulate questions
+        jobs: dict[str, Job] = {}
+        for agent_id in state["active_agents"]:
+            logger.debug(f"Dispatching clarifying question job for {agent_id}")
+
+            # TODO: Load personality config from character configuration file
+            # For MVP, using placeholder personality config (Android Engineer personality)
+            placeholder_personality = {
+                "analytical_score": 0.8,  # Logical, analytical thinking
+                "risk_tolerance": 0.3,  # Cautious, prefers safe solutions
+                "detail_oriented": 0.9,  # Very focused on technical details
+                "emotional_memory": 0.2,  # Factual memory, not emotion-driven
+                "assertiveness": 0.5,  # Balanced, not overly dominant
+                "cooperativeness": 0.7,  # Team player
+                "openness": 0.6,  # Open to new technical solutions
+                "rule_adherence": 0.8,  # Follows protocols closely
+                "roleplay_intensity": 0.6,  # Moderate roleplay
+                "base_decay_rate": 0.3  # Low memory decay (good retention)
+            }
+            placeholder_character_number = 2  # Android Engineer (good at Lasers)
+
+            # Convert prior Q&A messages to dicts for serialization
+            prior_qa_dicts = [msg.model_dump() for msg in prior_qa_this_turn]
+
+            job = base_persona_queue.enqueue(
+                'src.workers.base_persona_worker.formulate_clarifying_question',
+                args=(
+                    agent_id,
+                    state["dm_narration"],
+                    state["retrieved_memories"].get(agent_id, []),
+                    prior_qa_dicts,
+                    placeholder_personality,
+                    placeholder_character_number
+                ),
+                job_timeout=30,
+                result_ttl=300,
+                failure_ttl=600
+            )
+            jobs[agent_id] = job
+
+        # Wait for all jobs to complete with polling
+        questions: dict[str, dict | None] = {}
+        for agent_id, job in jobs.items():
+            logger.debug(f"Waiting for clarifying question from {agent_id}")
+
+            # Block until complete with exponential backoff polling
+            timeout = 35  # Slightly longer than job_timeout
+            _poll_job_with_backoff(job, timeout)
+
+            if job.is_failed:
+                raise JobFailedError(f"Clarifying question job failed for {agent_id}: {job.exc_info}")
+
+            # Validate question structure
+            question_result = job.result
+            if question_result is not None:
+                if not isinstance(question_result, dict):
+                    logger.error(f"Invalid question type from {agent_id}: {type(question_result)}")
+                    questions[agent_id] = None
+                elif "question" not in question_result:
+                    logger.error(f"Missing 'question' key from {agent_id}: {question_result}")
+                    questions[agent_id] = None
+                else:
+                    questions[agent_id] = question_result
+            else:
+                questions[agent_id] = None
+
+        # Filter to agents with questions
+        agents_with_questions = {
+            agent_id: q for agent_id, q in questions.items()
+            if q is not None
+        }
+
+        logger.debug(f"{len(agents_with_questions)}/{len(state['active_agents'])} agents have questions")
+
+        # Exit condition: No new questions
+        if not agents_with_questions:
+            logger.info(f"No new clarifying questions in round {current_round} - skipping wait, proceeding to memory query")
+            return {
+                **state,
+                "current_phase": GamePhase.MEMORY_QUERY.value,  # CHANGED: Skip to second memory query
+                "clarification_round": current_round,  # Track round even when skipping
+                "phase_start_time": datetime.now()
+            }
+
+        # Route questions to OOC channel
+        for agent_id, question_data in agents_with_questions.items():
+            router.add_message(
+                channel=MessageChannel.OOC,
+                from_agent=agent_id,
+                content=question_data["question"],
+                message_type=MessageType.DISCUSSION,
+                phase=GamePhase.DM_CLARIFICATION.value,
+                turn_number=state["turn_number"],
+                session_number=state.get("session_number", 1)
+            )
+            logger.debug(f"Routed question from {agent_id} to OOC channel")
+
+        # Track all questions across rounds for debugging/memory (immutable pattern)
+        existing_questions = state.get("all_clarification_questions", [])
+        new_questions = [
+            {
+                "round": current_round,
+                "agent_id": agent_id,
+                "question": question_data["question"]
+            }
+            for agent_id, question_data in agents_with_questions.items()
+        ]
+        all_questions = existing_questions + new_questions
+
+        logger.info(f"Collected {len(agents_with_questions)} clarifying questions in round {current_round}")
+
+        # Questions exist - route to wait node
+        return {
+            **state,
+            "all_clarification_questions": all_questions,  # Use the new list
+            "clarifying_questions_this_round": agents_with_questions,
+            "clarification_round": current_round,  # Track current round
+            "current_phase": GamePhase.DM_CLARIFICATION.value,  # Routes to wait node
+            "awaiting_dm_clarifications": True,
+            "phase_start_time": datetime.now()
+        }
+
+    return dm_clarification_collect_node
+
+
+def _create_dm_clarification_wait_node(router: MessageRouter):
+    """
+    Factory for dm_clarification_wait_node - pauses for DM answers.
+
+    This node is ONLY entered when questions exist. It's in interrupt_before
+    to pause the graph and wait for DM to provide answers.
+
+    After DM answers (via resume_turn_with_dm_input), the graph loops back
+    to dm_clarification_collect to check for follow-up questions.
+
+    Args:
+        router: MessageRouter (not used, but kept for consistency)
+
+    Returns:
+        Node function
+    """
+
+    def dm_clarification_wait_node(state: GameState) -> GameState:
+        """
+        Pause and wait for DM to answer clarifying questions.
+
+        This node does minimal work - it just ensures the graph pauses
+        via interrupt_before. The actual answer routing happens in
+        resume_turn_with_dm_input.
+
+        After resume, the conditional edge routes back to collect node
+        to check for follow-up questions.
+        """
+        current_round = state.get("clarification_round", 1)
+
+        logger.info(
+            f"[PHASE: DM_CLARIFICATION_WAIT] Round {current_round} - "
+            f"Paused for DM answers"
+        )
+
+        # State is already set by collect node, just preserve it
+        # The interrupt will happen before this node executes
+        return {
+            **state,
+            "current_phase": GamePhase.DM_CLARIFICATION.value,  # Stay in clarification phase
+            "phase_start_time": datetime.now()
+        }
+
+    return dm_clarification_wait_node
+
+
 def _create_strategic_intent_node(base_persona_queue: Queue):
     """
     Factory for strategic_intent_node with injected dependencies.
@@ -1184,6 +1484,54 @@ def check_laser_feelings(state: GameState) -> Literal["question", "outcome"]:
         return "outcome"
 
 
+def check_clarification_after_collect(state: GameState) -> Literal["wait", "skip"]:
+    """
+    Conditional edge after dm_clarification_collect.
+
+    Routes to:
+    - "wait": If questions exist (current_phase still DM_CLARIFICATION)
+    - "skip": If no questions (current_phase changed to MEMORY_QUERY)
+
+    Args:
+        state: Current game state
+
+    Returns:
+        Route key
+    """
+    # Check if collect node set phase to MEMORY_QUERY (no questions)
+    if state["current_phase"] == GamePhase.MEMORY_QUERY.value:
+        return "skip"
+    else:
+        # Phase is still DM_CLARIFICATION, meaning questions exist
+        return "wait"
+
+
+def check_clarification_after_wait(state: GameState) -> Literal["loop", "proceed"]:
+    """
+    Conditional edge after dm_clarification_wait (after DM answers).
+
+    Routes to:
+    - "loop": Back to collect node to check for follow-up questions
+    - "proceed": To second_memory_query if max rounds reached
+
+    Args:
+        state: Current game state
+
+    Returns:
+        Route key
+    """
+    MAX_CLARIFICATION_ROUNDS = 3
+    current_round = state.get("clarification_round", 1)
+
+    # Check if max rounds reached
+    if current_round >= MAX_CLARIFICATION_ROUNDS:
+        logger.info(f"Max clarification rounds ({MAX_CLARIFICATION_ROUNDS}) reached")
+        return "proceed"
+    else:
+        # Loop back to collect node for potential follow-ups
+        return "loop"
+
+
 # ============================================================================
 # Validation Retry Node
 # ============================================================================
@@ -1306,6 +1654,8 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     router = MessageRouter(redis_client)
 
     # Create node functions with injected dependencies (factory pattern)
+    dm_clarification_collect_node = _create_dm_clarification_collect_node(base_persona_queue, router)
+    dm_clarification_wait_node = _create_dm_clarification_wait_node(router)
     strategic_intent_node = _create_strategic_intent_node(base_persona_queue)
     p2c_directive_node = _create_p2c_directive_node(router)
     character_action_node = _create_character_action_node(character_queue, router)
@@ -1318,6 +1668,9 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     # Add phase handler nodes (T047-T056)
     workflow.add_node("dm_narration", dm_narration_node)
     workflow.add_node("memory_retrieval", memory_retrieval_node)
+    workflow.add_node("dm_clarification_collect", dm_clarification_collect_node)  # Phase 2 Extension: collect questions
+    workflow.add_node("dm_clarification_wait", dm_clarification_wait_node)  # Phase 2 Extension: wait for DM answers
+    workflow.add_node("second_memory_query", second_memory_query_node)  # Re-query memories with clarification context
     workflow.add_node("strategic_intent", strategic_intent_node)
     workflow.add_node("p2c_directive", p2c_directive_node)
     workflow.add_node("character_action", character_action_node)
@@ -1339,7 +1692,37 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
 
     # Add linear edges for main flow
     workflow.add_edge("dm_narration", "memory_retrieval")
-    workflow.add_edge("memory_retrieval", "strategic_intent")
+
+    # Memory retrieval → clarification collect
+    workflow.add_edge("memory_retrieval", "dm_clarification_collect")
+
+    # Conditional routing after collect:
+    # - If questions exist: route to wait node (which interrupts)
+    # - If no questions: skip to second_memory_query
+    workflow.add_conditional_edges(
+        "dm_clarification_collect",
+        check_clarification_after_collect,
+        {
+            "wait": "dm_clarification_wait",  # Questions exist, pause for DM
+            "skip": "second_memory_query"  # No questions, proceed automatically
+        }
+    )
+
+    # Conditional routing after wait (after DM answers):
+    # - Loop back to collect for follow-up questions
+    # - Or proceed to memory query if max rounds reached
+    workflow.add_conditional_edges(
+        "dm_clarification_wait",
+        check_clarification_after_wait,
+        {
+            "loop": "dm_clarification_collect",  # Check for follow-ups
+            "proceed": "second_memory_query"  # Max rounds, exit clarification
+        }
+    )
+
+    # Second memory query → strategic intent
+    workflow.add_edge("second_memory_query", "strategic_intent")
+
     workflow.add_edge("strategic_intent", "p2c_directive")
     workflow.add_edge("p2c_directive", "character_action")
 
@@ -1374,13 +1757,23 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
     # T058: Compile with checkpointing and interrupt points
     # Interrupt before DM input phases to allow interactive CLI prompting
     # Phase 2 Issue #3: Add laser_feelings_question as interrupt point
+    # Phase 2 Extension: dm_clarification_wait is interrupt point (not collect)
+    #   - collect node runs immediately after memory_retrieval (no interrupt)
+    #   - If questions exist: collect routes to wait node
+    #   - wait node is in interrupt_before to pause for DM input
+    #   - DM provides answers via resume_turn (dm_clarification_answer)
+    #   - Resume routes back to collect to check for follow-up questions
+    #   - If no questions: collect skips directly to second_memory_query
+    #   - Continues until no questions or max rounds reached
+    #
+    # ONLY interrupt at dm_clarification_wait (not collect)
     checkpointer = MemorySaver()
     app = workflow.compile(
         checkpointer=checkpointer,
-        interrupt_before=["dm_adjudication", "laser_feelings_question", "dm_outcome"]
+        interrupt_before=["dm_clarification_wait", "dm_adjudication", "laser_feelings_question", "dm_outcome"]
     )
 
-    logger.info("Turn cycle state machine built successfully with interrupt points at dm_adjudication, laser_feelings_question, and dm_outcome")
+    logger.info("Turn cycle state machine built successfully with interrupt points at dm_clarification_wait, dm_adjudication, laser_feelings_question, and dm_outcome")
     return app
 
 
@@ -1510,21 +1903,24 @@ class TurnOrchestrator:
     def resume_turn_with_dm_input(
         self,
         session_number: int,
-        dm_input_type: Literal["adjudication", "laser_feelings_answer", "outcome"],
+        dm_input_type: Literal["dm_clarification_answer", "adjudication", "laser_feelings_answer", "outcome"],
         dm_input_data: dict
     ) -> dict:
         """
         Resume interrupted turn with DM input.
 
         Phase 2 Issue #3: Added "laser_feelings_answer" input type for LASER FEELINGS flow.
+        Phase 2 Extension: Added "dm_clarification_answer" for clarifying questions flow.
 
         Args:
             session_number: Session to resume
             dm_input_type: Type of DM input:
+                - "dm_clarification_answer": DM answers clarifying questions (Phase 2 Extension)
                 - "adjudication": DM provides dice ruling
                 - "laser_feelings_answer": DM answers LASER FEELINGS question (Phase 2 Issue #3)
                 - "outcome": DM provides outcome narration
             dm_input_data: DM's input data:
+                - For dm_clarification_answer: {"answers": list[dict]} where each dict has {"agent_id": str, "answer": str}
                 - For adjudication: {"needs_dice": bool, "dice_override": int | None, "laser_feelings_answer": str | None}
                 - For laser_feelings_answer: {"answer": str}
                 - For outcome: {"outcome_text": str, "laser_feelings_answer": str | None}
@@ -1549,7 +1945,41 @@ class TurnOrchestrator:
         logger.info(f"Resuming session {session_number} at {awaiting_phase} with {dm_input_type} input")
 
         # Update state based on DM input type
-        if dm_input_type == "adjudication":
+        if dm_input_type == "dm_clarification_answer":
+            # Route DM answers to OOC channel
+            answers = dm_input_data.get("answers", [])
+            force_finish = dm_input_data.get("force_finish", False)
+
+            for answer_dict in answers:
+                agent_id = answer_dict.get("agent_id")
+                answer_text = answer_dict.get("answer")
+                self.router.add_message(
+                    channel=MessageChannel.OOC,
+                    from_agent="dm",
+                    content=f"[Answer to {agent_id}]: {answer_text}",
+                    message_type=MessageType.NARRATION,
+                    phase=GamePhase.DM_CLARIFICATION.value,
+                    turn_number=current_state["turn_number"],
+                    session_number=session_number
+                )
+
+            # Get MAX_CLARIFICATION_ROUNDS from the node (should be 3)
+            MAX_CLARIFICATION_ROUNDS = 3
+
+            # Handle force_finish by setting round beyond max
+            current_round = current_state.get("clarification_round", 1)
+            if force_finish:
+                logger.info("DM requested force finish - skipping remaining clarification rounds")
+                current_state["clarification_round"] = MAX_CLARIFICATION_ROUNDS + 1  # Force exit
+            else:
+                current_state["clarification_round"] = current_round + 1
+
+            current_state["awaiting_dm_clarifications"] = False
+
+            # Keep phase as DM_CLARIFICATION so conditional edge loops back to collect
+            # The collect node will check for follow-up questions (or exit if max rounds)
+
+        elif dm_input_type == "adjudication":
             # DM provided adjudication (needs dice? manual override?)
             current_state["dm_adjudication_needed"] = dm_input_data.get("needs_dice", True)
             if "dice_override" in dm_input_data:

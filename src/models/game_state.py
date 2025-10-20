@@ -26,6 +26,7 @@ class GamePhase(str, Enum):
     """Turn cycle phases in LangGraph state machine"""
     DM_NARRATION = "dm_narration"
     MEMORY_QUERY = "memory_query"
+    DM_CLARIFICATION = "dm_clarification"
     STRATEGIC_INTENT = "strategic_intent"
     OOC_DISCUSSION = "ooc_discussion"
     CONSENSUS_DETECTION = "consensus_detection"
@@ -46,6 +47,7 @@ class GameState(TypedDict):
     current_phase: Literal[
         "dm_narration",
         "memory_query",
+        "dm_clarification",
         "strategic_intent",
         "ooc_discussion",
         "consensus_detection",
@@ -86,6 +88,7 @@ class GameState(TypedDict):
 
     # Memory retrieval
     retrieved_memories: dict[str, list[dict]]  # agent_id -> memory list
+    retrieved_memories_post_clarification: NotRequired[dict[str, list[dict]]]  # agent_id -> memories after clarifications
 
     # Dice resolution - Uses multi-die success counting system
     # Lasers & Feelings rules: Roll 1d6 per die, each die succeeds independently
@@ -126,6 +129,12 @@ class GameState(TypedDict):
     # LASER FEELINGS state (Phase 2 Issue #3)
     laser_feelings_data: NotRequired[dict]  # Stores original roll, action, dice parameters for re-roll
     waiting_for_gm_answer: NotRequired[bool]  # True when paused waiting for GM answer to LASER FEELINGS question
+
+    # DM Clarification state
+    clarification_round: NotRequired[int]  # Current round number (1-based)
+    awaiting_dm_clarifications: NotRequired[bool]  # True when paused for DM answers
+    clarifying_questions_this_round: NotRequired[dict[str, dict]]  # Current round questions
+    all_clarification_questions: NotRequired[list[dict]]  # Historical log across rounds
 
 
 class MemoryQueryState(TypedDict):

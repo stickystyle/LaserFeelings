@@ -5,6 +5,7 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from loguru import logger
@@ -13,6 +14,7 @@ from redis import Redis
 from src.config.settings import get_settings
 from src.models.dice_models import LasersFeelingRollResult
 from src.models.game_state import GamePhase
+from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 from src.orchestration.state_machine import TurnOrchestrator
 from src.utils.dice import parse_dice_notation, roll_dice, roll_lasers_feelings
@@ -506,6 +508,7 @@ class CLIFormatter:
         name_map = {
             GamePhase.DM_NARRATION: "DM Narration",
             GamePhase.MEMORY_QUERY: "Memory Query",
+            GamePhase.DM_CLARIFICATION: "DM Clarification",
             GamePhase.STRATEGIC_INTENT: "Strategic Intent",
             GamePhase.OOC_DISCUSSION: "OOC Discussion",
             GamePhase.CONSENSUS_DETECTION: "Consensus Detection",
@@ -513,6 +516,7 @@ class CLIFormatter:
             GamePhase.VALIDATION: "Validation",
             GamePhase.DM_ADJUDICATION: "DM Adjudication",
             GamePhase.DICE_RESOLUTION: "Dice Resolution",
+            GamePhase.LASER_FEELINGS_QUESTION: "Laser Feelings Question",
             GamePhase.DM_OUTCOME: "DM Outcome",
             GamePhase.CHARACTER_REACTION: "Character Reaction",
             GamePhase.MEMORY_STORAGE: "Memory Storage",
@@ -1031,6 +1035,36 @@ class DMCommandLineInterface:
         """
         return self._character_names.get(character_id, character_id)
 
+    def _get_agent_name(self, agent_id: str) -> str:
+        """
+        Get agent name from agent_id, falling back to ID if not found.
+
+        Args:
+            agent_id: Agent identifier (e.g., "agent_alex_001")
+
+        Returns:
+            Agent name if found, otherwise agent_id
+        """
+        # Extract player name from agent ID
+        # agent_alex_001 → Alex
+        if agent_id.startswith("agent_"):
+            parts = agent_id.split("_")
+            if len(parts) >= 2:
+                return parts[1].capitalize()
+
+        return agent_id
+
+    def _get_or_create_router(self) -> MessageRouter:
+        """
+        Get or create MessageRouter instance.
+
+        Returns:
+            MessageRouter instance
+        """
+        settings = get_settings()
+        redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
+        return MessageRouter(redis_client)
+
     def _execute_character_suggested_roll(self) -> dict:
         """
         Execute Lasers & Feelings roll using character's suggested parameters.
@@ -1373,6 +1407,141 @@ class DMCommandLineInterface:
                     "error": f"Invalid command for adjudication: {parsed.command_type}",
                     "suggestion": "Use: success, fail, /roll, or /roll <dice>"
                 }
+
+        elif awaiting_phase == "dm_clarification_wait":
+            # Fetch clarification round from turn state
+            turn_result = self._current_turn_result or {}
+            round_num = turn_result.get("clarification_round", 1)
+
+            print(f"\n=== Player Clarifying Questions (Round {round_num}) ===")
+
+            # Fetch OOC messages from current turn (dm_clarification phase only)
+            router = self._get_or_create_router()
+            ooc_messages = router.get_ooc_messages_for_player(limit=100)
+
+            clarification_messages = [
+                msg for msg in ooc_messages
+                if (msg.phase == "dm_clarification" and
+                    msg.turn_number == self._turn_number)
+            ]
+
+            if not clarification_messages:
+                # No messages found (shouldn't happen, but handle gracefully)
+                logger.warning("No clarification messages found but wait node was entered")
+                return {
+                    "success": True,
+                    "input_type": "dm_clarification_answer",
+                    "data": {"answers": [], "force_finish": False}
+                }
+
+            # Separate questions from answers
+            # Questions are from agents (not "dm")
+            # Answers are from "dm"
+            questions = [msg for msg in clarification_messages if msg.from_agent != "dm"]
+            dm_answers = [msg for msg in clarification_messages if msg.from_agent == "dm"]
+
+            # Find questions that haven't been answered yet
+            # Compare timestamps: questions after the last DM answer are new
+            last_answer_time = datetime.min
+            if dm_answers:
+                last_answer_time = max(msg.timestamp for msg in dm_answers)
+
+            new_questions = [
+                msg for msg in questions
+                if msg.timestamp > last_answer_time
+            ]
+
+            if not new_questions:
+                # All questions already answered (shouldn't happen, but handle gracefully)
+                logger.warning("No new questions found but wait node was entered")
+                return {
+                    "success": True,
+                    "input_type": "dm_clarification_answer",
+                    "data": {"answers": [], "force_finish": False}
+                }
+
+            # Display new questions with agent IDs
+            print(f"\nNew questions this round:")
+            question_map = {}  # Map question number to agent_id
+            for idx, msg in enumerate(new_questions, 1):
+                agent_name = self._get_agent_name(msg.from_agent)
+                question_map[idx] = msg.from_agent  # Store agent_id
+                print(f"  [{idx}] {agent_name}: \"{msg.content}\"")
+
+            print("\nAnswer questions one at a time using format: <number> <answer>")
+            print("Examples: '1 About 50 meters', '2 Yes there are'")
+            print("Or type 'done' to continue, or 'finish' to skip remaining rounds.")
+            print(self.formatter.format_awaiting_dm_input(
+                current_phase=GamePhase.DM_CLARIFICATION
+            ))
+
+            # Collect answers with agent_id tracking
+            answers_dict = {}  # Map agent_id to answer text
+            force_finish = False
+
+            while True:
+                user_input = input().strip()
+
+                if not user_input:
+                    print("Please provide an answer, 'done', or 'finish'")
+                    continue
+
+                # Check for commands
+                if user_input.lower() == "finish":
+                    # DM wants to skip remaining rounds
+                    force_finish = True
+                    break
+
+                if user_input.lower() in ["done", "continue", "next"]:
+                    # DM finished answering this round
+                    break
+
+                # Parse numbered answer: "1 answer text"
+                parts = user_input.split(maxsplit=1)
+                if len(parts) != 2:
+                    print("Format: <number> <answer>  (e.g., '1 About 50 meters')")
+                    continue
+
+                num_str, answer_text = parts
+
+                try:
+                    question_num = int(num_str)
+                except ValueError:
+                    print(f"Invalid question number: {num_str}. Use format: <number> <answer>")
+                    continue
+
+                if question_num not in question_map:
+                    print(f"Question {question_num} not found. Available: {list(question_map.keys())}")
+                    continue
+
+                # Get agent_id for this question
+                agent_id = question_map[question_num]
+
+                # Store answer
+                answers_dict[agent_id] = answer_text
+
+                agent_name = self._get_agent_name(agent_id)
+                print(f"✓ Answer recorded for {agent_name}")
+
+            if force_finish:
+                print(f"\n✓ Skipping remaining clarification rounds. Proceeding to strategy phase...")
+            else:
+                print(f"\n✓ {len(answers_dict)} answer(s) recorded. Checking for follow-up questions...")
+
+            # Convert answers_dict to list format expected by state machine
+            answers_list = [
+                {"agent_id": agent_id, "answer": answer_text}
+                for agent_id, answer_text in answers_dict.items()
+            ]
+
+            return {
+                "success": True,
+                "input_type": "dm_clarification_answer",
+                "data": {
+                    "answers": answers_list,
+                    "force_finish": force_finish
+                }
+            }
 
         elif awaiting_phase == "dm_outcome":
             # Prompt for outcome narration

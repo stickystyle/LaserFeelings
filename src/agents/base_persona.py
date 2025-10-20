@@ -66,14 +66,28 @@ class BasePersonaAgent:
 
     def _build_mechanics_context(self) -> str:
         """
-        Build game mechanics section using character's Lasers & Feelings number.
+        Build game mechanics section using canonical rules and character's number.
 
         Returns:
-            Formatted string explaining game mechanics personalized to character.
+            Formatted string with complete rules plus personalized mechanics context.
         """
-        from src.config.prompts import build_game_mechanics_section
+        from src.config.prompts import load_game_rules, build_game_mechanics_section
 
-        return build_game_mechanics_section(self.character_number)
+        # Load canonical rules document
+        canonical_rules = load_game_rules()
+
+        # Build personalized mechanics section
+        personalized_mechanics = build_game_mechanics_section(self.character_number)
+
+        # Combine: Full rules + personalized strategic guidance
+        return f"""{canonical_rules}
+
+---
+
+# YOUR CHARACTER'S MECHANICAL PROFILE
+
+{personalized_mechanics}
+"""
 
     async def participate_in_ooc_discussion(
         self,
@@ -424,3 +438,150 @@ Keep instruction abstract - let character layer handle roleplay details.
 
         except json.JSONDecodeError as e:
             raise LLMCallFailed(f"Failed to parse directive JSON: {e}") from e
+
+    def _format_memories(self, memories: list[dict]) -> str:
+        """
+        Format retrieved memories into readable text.
+
+        Args:
+            memories: List of memory dicts from graph retrieval
+
+        Returns:
+            Formatted string of memories, or "No relevant memories" if empty
+        """
+        if not memories:
+            return "No relevant memories found."
+
+        formatted = []
+        for mem in memories:
+            # Extract fact and confidence from memory dict
+            fact = mem.get("fact", mem.get("content", "Unknown"))
+            confidence = mem.get("confidence", 1.0)
+            formatted.append(f"- {fact} (confidence: {confidence:.2f})")
+
+        return "\n".join(formatted)
+
+    async def formulate_clarifying_question(
+        self,
+        dm_narration: str,
+        retrieved_memories: list[dict],
+        prior_qa: list[Message],
+    ) -> dict | None:
+        """
+        Decide if NEW clarifying question is needed based on narration and context.
+
+        Args:
+            dm_narration: The DM's scene description for this turn
+            retrieved_memories: Relevant memories from this player's graph
+            prior_qa: All OOC messages from dm_clarification phase this turn
+
+        Returns:
+            dict with {"question": str, "reasoning": str} if player has a question
+            None if player has no new questions
+
+        Raises:
+            RuntimeError: When openai_client not provided to constructor
+            LLMCallFailed: When OpenAI API call fails after retries
+        """
+        # Validate dependencies at runtime
+        if not self._llm_client:
+            raise RuntimeError(
+                "BasePersonaAgent requires openai_client to be initialized. "
+                "Provide this dependency in the constructor."
+            )
+
+        # Format prior Q&A context
+        prior_qa_context = ""
+        if prior_qa:
+            formatted_qa = []
+            for msg in prior_qa:
+                # Label messages from self as "You", from DM as "DM", others as-is
+                if msg.from_agent == self.agent_id:
+                    sender = "You"
+                elif msg.from_agent == "dm":
+                    sender = "DM"
+                else:
+                    sender = msg.from_agent
+                formatted_qa.append(f"{sender}: {msg.content}")
+            prior_qa_context = "\n".join(formatted_qa)
+
+        # Format memories
+        formatted_memories = self._format_memories(retrieved_memories)
+
+        # Build mechanics context for informed questioning
+        mechanics_context = self._build_mechanics_context()
+
+        # Create LLM prompt
+        system_prompt = f"""You are {self.agent_id}, a player in a tabletop RPG.
+
+Your personality:
+- Analytical score: {self.personality.analytical_score:.2f}
+- Risk tolerance: {self.personality.risk_tolerance:.2f}
+
+{mechanics_context}
+
+You are deciding whether to ask the DM a clarifying question based on their narration.
+"""
+
+        user_prompt = f"""The DM narrated:
+{dm_narration}
+
+Your relevant memories:
+{formatted_memories}
+"""
+
+        if prior_qa_context:
+            user_prompt += f"""
+Previous clarifying questions and answers this turn:
+{prior_qa_context}
+"""
+
+        user_prompt += """
+Do you have any NEW clarifying questions based on the narration and prior Q&A?
+
+Guidelines:
+- Don't repeat questions already asked
+- You can ask follow-ups based on answers
+- Only ask if you need factual information for your decision
+- If your questions are answered, respond with has_question: false
+- Ask about tactical details that affect your strategic planning
+
+Respond with JSON:
+{"has_question": true, "question": "...", "reasoning": "why I need this"}
+OR
+{"has_question": false}
+"""
+
+        try:
+            response = await self._llm_client.call(
+                system_prompt,
+                user_prompt,
+                temperature=self.temperature,
+                response_format={"type": "json_object"},
+            )
+
+            # Parse JSON response
+            data = json.loads(response)
+
+            # Check if player has a question
+            has_question = data.get("has_question", False)
+
+            if has_question:
+                question = data.get("question", "").strip()
+                reasoning = data.get("reasoning", "").strip()
+
+                # Validate question is present
+                if not question:
+                    raise LLMCallFailed(
+                        "LLM indicated has_question=true but provided no question text"
+                    )
+
+                return {
+                    "question": question,
+                    "reasoning": reasoning or "No reasoning provided"
+                }
+            else:
+                return None
+
+        except json.JSONDecodeError as e:
+            raise LLMCallFailed(f"Failed to parse clarifying question JSON: {e}") from e
