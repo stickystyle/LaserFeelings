@@ -39,19 +39,13 @@ class MessageRouter:
 
     # Channel visibility rules (declarative documentation)
     VISIBILITY_RULES = {
-        MessageChannel.IC: {
-            "characters": True,
-            "base_personas": "summary_only"
-        },
+        MessageChannel.IC: {"characters": True, "base_personas": "summary_only"},
         MessageChannel.OOC: {
             "characters": False,
             "base_personas": True,
-            "dm": True  # DM answers clarifying questions visible to all players
+            "dm": True,  # DM answers clarifying questions visible to all players
         },
-        MessageChannel.P2C: {
-            "characters": "recipient_only",
-            "base_personas": False
-        }
+        MessageChannel.P2C: {"characters": "recipient_only", "base_personas": False},
     }
 
     def route_message(self, message: Message) -> dict:
@@ -67,9 +61,7 @@ class MessageRouter:
         Raises:
             ValueError: If channel not recognized or recipient invalid
         """
-        logger.debug(
-            f"Routing message {message.message_id} to channel {message.channel}"
-        )
+        logger.debug(f"Routing message {message.message_id} to channel {message.channel}")
 
         recipients_count = 0
 
@@ -91,14 +83,9 @@ class MessageRouter:
         else:
             raise ValueError(f"Unknown channel: {message.channel}")
 
-        logger.info(
-            f"Routed message {message.message_id} to {recipients_count} recipients"
-        )
+        logger.info(f"Routed message {message.message_id} to {recipients_count} recipients")
 
-        return {
-            "success": True,
-            "recipients_count": recipients_count
-        }
+        return {"success": True, "recipients_count": recipients_count}
 
     def _broadcast_to_characters(self, message: Message) -> int:
         """
@@ -132,7 +119,7 @@ class MessageRouter:
             action_summary=self._summarize_action(message.content),
             outcome_summary=None,  # Filled in by outcome phase
             turn_number=message.turn_number,
-            timestamp=message.timestamp
+            timestamp=message.timestamp,
         )
 
         key = "channel:ic:summaries"
@@ -201,10 +188,7 @@ class MessageRouter:
         return recipients
 
     def get_messages_for_agent(
-        self,
-        agent_id: str,
-        agent_type: Literal["base_persona", "character"],
-        limit: int = 50
+        self, agent_id: str, agent_type: Literal["base_persona", "character"], limit: int = 50
     ) -> list[Message]:
         """
         Retrieve messages visible to specific agent based on visibility rules.
@@ -251,19 +235,15 @@ class MessageRouter:
         messages = []
         for raw in raw_messages:
             # Decode bytes if needed (decode_responses=False)
-            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             data = json.loads(text)
             # Parse datetime strings
-            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
             messages.append(Message(**data))
 
         return messages
 
-    def _get_p2c_messages_for_character(
-        self,
-        character_id: str,
-        limit: int
-    ) -> list[Message]:
+    def _get_p2c_messages_for_character(self, character_id: str, limit: int) -> list[Message]:
         """Retrieve P2C directives for specific character"""
         key = f"channel:p2c:{character_id}"
         raw_messages = self.redis.lrange(key, -limit, -1)
@@ -271,9 +251,9 @@ class MessageRouter:
         messages = []
         for raw in raw_messages:
             # Decode bytes if needed (decode_responses=False)
-            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             data = json.loads(text)
-            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
             messages.append(Message(**data))
 
         return messages
@@ -296,9 +276,9 @@ class MessageRouter:
         messages = []
         for raw in raw_messages:
             # Decode bytes if needed (decode_responses=False)
-            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             data = json.loads(text)
-            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
             messages.append(Message(**data))
 
         return messages
@@ -319,9 +299,9 @@ class MessageRouter:
         summaries = []
         for raw in raw_summaries:
             # Decode bytes if needed (decode_responses=False)
-            text = raw.decode('utf-8') if isinstance(raw, bytes) else raw
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             data = json.loads(text)
-            data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+            data["timestamp"] = datetime.fromisoformat(data["timestamp"])
             summaries.append(ICMessageSummary(**data))
 
         return summaries
@@ -356,7 +336,7 @@ class MessageRouter:
         phase: str,
         turn_number: int,
         to_agents: list[str] | None = None,
-        session_number: int | None = None
+        session_number: int | None = None,
     ) -> Message:
         """
         Create and route a new message.
@@ -386,7 +366,7 @@ class MessageRouter:
             message_type=message_type,
             phase=phase,
             turn_number=turn_number,
-            session_number=session_number
+            session_number=session_number,
         )
 
         self.route_message(message)

@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 
-from src.orchestration.state_machine import dice_resolution_node
+from src.orchestration.nodes.outcome_nodes import dice_resolution_node
 from src.models.game_state import GameState
 from src.utils.dice import LasersFeelingRollResult, RollOutcome
 
@@ -49,7 +49,7 @@ def test_dice_complication_true_only_for_laser_feelings(base_game_state):
     This should NOT include "barely" outcomes (1 success).
     """
     # Mock roll_lasers_feelings to return LASER FEELINGS result
-    with patch("src.orchestration.state_machine.roll_lasers_feelings") as mock_roll:
+    with patch("src.orchestration.nodes.outcome_nodes.roll_lasers_feelings") as mock_roll:
         # Character number 2, rolls exact 2 on one die → LASER FEELINGS + success
         mock_roll.return_value = LasersFeelingRollResult(
             character_number=2,
@@ -80,7 +80,7 @@ def test_dice_complication_false_for_barely_outcome_without_laser_feelings(base_
     Only actual LASER FEELINGS (exact match) should trigger it.
     """
     # Mock roll_lasers_feelings to return "barely" outcome (1 success) without LASER FEELINGS
-    with patch("src.orchestration.state_machine.roll_lasers_feelings") as mock_roll:
+    with patch("src.orchestration.nodes.outcome_nodes.roll_lasers_feelings") as mock_roll:
         # Character number 2, rolls [1] → 1 success (barely) but NO exact match
         mock_roll.return_value = LasersFeelingRollResult(
             character_number=2,
@@ -108,7 +108,7 @@ def test_dice_complication_false_for_failure(base_game_state):
     """
     Test that dice_complication is False for failure outcomes without LASER FEELINGS.
     """
-    with patch("src.orchestration.state_machine.roll_lasers_feelings") as mock_roll:
+    with patch("src.orchestration.nodes.outcome_nodes.roll_lasers_feelings") as mock_roll:
         # Character number 2, rolls [5] → failure, no LASER FEELINGS
         mock_roll.return_value = LasersFeelingRollResult(
             character_number=2,
@@ -136,7 +136,7 @@ def test_dice_complication_true_for_laser_feelings_with_barely_outcome(base_game
 
     Edge case: Rolling exact match on 1 die while having multiple dice total = 1 success.
     """
-    with patch("src.orchestration.state_machine.roll_lasers_feelings") as mock_roll:
+    with patch("src.orchestration.nodes.outcome_nodes.roll_lasers_feelings") as mock_roll:
         # Character number 2, rolls [2, 5] → 1 success (barely) BUT first die is LASER FEELINGS
         mock_roll.return_value = LasersFeelingRollResult(
             character_number=2,

@@ -10,13 +10,13 @@ from redis import Redis
 from src.models.game_state import GamePhase
 from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
-from src.orchestration.state_machine import _create_dm_outcome_node
+from src.orchestration.nodes.outcome_nodes import _create_dm_outcome_node
 
 
 class TestLaserFeelingsAnswerStorage:
     """Test that laser_feelings_answer is stored in game state during resume_turn_with_dm_input"""
 
-    @patch("src.orchestration.state_machine.Queue")
+    @patch("src.orchestration.turn_orchestrator.Queue")
     def test_laser_feelings_answer_stored_from_adjudication_input(self, mock_queue_class):
         """
         Test that laser_feelings_answer is extracted and stored when provided during adjudication.
@@ -26,7 +26,7 @@ class TestLaserFeelingsAnswerStorage:
         - Answer is stored in game state
         - Graph state is updated with the answer
         """
-        from src.orchestration.state_machine import TurnOrchestrator
+        from src.orchestration.turn_orchestrator import TurnOrchestrator
 
         # Mock Redis
         redis_client = MagicMock(spec=Redis)
@@ -95,7 +95,7 @@ class TestLaserFeelingsAnswerStorage:
         assert "laser_feelings_answer" in updated_state
         assert updated_state["laser_feelings_answer"] == "You notice a subtle energy fluctuation in the reactor core"
 
-    @patch("src.orchestration.state_machine.Queue")
+    @patch("src.orchestration.turn_orchestrator.Queue")
     def test_laser_feelings_answer_stored_from_outcome_input(self, mock_queue_class):
         """
         Test that laser_feelings_answer is extracted and stored when provided during outcome phase.
@@ -105,7 +105,7 @@ class TestLaserFeelingsAnswerStorage:
         - Answer is stored in game state alongside outcome_text
         - Graph state is updated with both fields
         """
-        from src.orchestration.state_machine import TurnOrchestrator
+        from src.orchestration.turn_orchestrator import TurnOrchestrator
 
         # Mock Redis
         redis_client = MagicMock(spec=Redis)
@@ -296,7 +296,7 @@ class TestLaserFeelingsAnswerRouting:
         first_call = router.add_message.call_args_list[0]
         assert first_call[1]["channel"] == MessageChannel.IC
 
-    @patch("src.orchestration.state_machine._get_character_id_for_agent")
+    @patch("src.orchestration.nodes.helpers._get_character_id_for_agent")
     def test_fallback_to_agent_mapping_when_no_dice_action_character(self, mock_get_char_id):
         """
         Test that dm_outcome_node falls back to agent mapping when dice_action_character not set.

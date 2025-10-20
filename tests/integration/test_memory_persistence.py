@@ -9,7 +9,7 @@ import pytest
 # These imports will fail until implementations exist (TDD phase)
 from src.memory.corrupted_temporal import CorruptedTemporalMemory
 from src.memory.graphiti_client import GraphitiClient
-from src.orchestrator.turn_manager import TurnManager
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 
 # Core models
 from src.models.personality import CharacterRole, CharacterSheet, CharacterStyle, PlayerPersonality

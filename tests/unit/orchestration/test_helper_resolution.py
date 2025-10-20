@@ -403,7 +403,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_helper_uses_actual_character_number_from_config(self):
         """Test C1: Helpers use their actual character number from config file"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch, mock_open
         import json
 
@@ -455,7 +455,7 @@ class TestHelperResolutionNodeLogic:
         }
 
         with patch('builtins.open', mock_open(read_data=json.dumps(mock_config))):
-            with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+            with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
                 # Setup mock to capture the character_number argument
                 mock_result = Mock()
                 mock_result.total_successes = 1
@@ -476,7 +476,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_helper_config_not_found_uses_fallback(self):
         """Test C1: If config not found, use fallback number 3 with warning"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch
 
         state = {
@@ -513,7 +513,7 @@ class TestHelperResolutionNodeLogic:
         }
 
         with patch('builtins.open', side_effect=FileNotFoundError("Config not found")):
-            with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+            with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
                 mock_result = Mock()
                 mock_result.total_successes = 1
                 mock_result.individual_rolls = [2]
@@ -529,7 +529,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_c2_invalid_helper_target_is_skipped_with_warning(self):
         """Test C2: Helpers targeting nonexistent characters are skipped gracefully"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch
 
         # Create state where helper targets a nonexistent primary character
@@ -568,7 +568,7 @@ class TestHelperResolutionNodeLogic:
             "retry_count": 0
         }
 
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             result_state = resolve_helpers_node(state)
 
             # Verify roll was NOT called (helper was skipped)
@@ -582,7 +582,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_c2_valid_and_invalid_helpers_mixed(self):
         """Test C2: When some helpers are valid and some invalid, only valid ones process"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch, mock_open
         import json
 
@@ -639,7 +639,7 @@ class TestHelperResolutionNodeLogic:
         }
 
         with patch('builtins.open', mock_open(read_data=json.dumps(mock_config_nova))):
-            with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+            with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
                 # Mock successful roll for valid helper
                 mock_result = Mock()
                 mock_result.total_successes = 1
@@ -657,7 +657,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_m1_helper_roll_exception_doesnt_crash_resolution(self):
         """Test M1: Exception during helper roll doesn't crash the entire resolution"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch, mock_open
         import json
 
@@ -710,7 +710,7 @@ class TestHelperResolutionNodeLogic:
         mock_config = {"character_id": "char_nova_002", "name": "Nova", "number": 3}
 
         with patch('builtins.open', mock_open(read_data=json.dumps(mock_config))):
-            with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+            with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
                 # First call raises exception, second call succeeds
                 mock_result_success = Mock()
                 mock_result_success.total_successes = 1
@@ -732,7 +732,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_m1_all_helpers_exception_still_returns_zero_count(self):
         """Test M1: If all helpers crash, count is 0 and resolution continues"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from unittest.mock import patch, mock_open
         import json
 
@@ -774,7 +774,7 @@ class TestHelperResolutionNodeLogic:
         mock_config = {"character_id": "char_nova_002", "name": "Nova", "number": 3}
 
         with patch('builtins.open', mock_open(read_data=json.dumps(mock_config))):
-            with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+            with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
                 # All rolls raise exceptions
                 mock_roll.side_effect = ValueError("Invalid dice configuration")
 
@@ -789,7 +789,7 @@ class TestHelperResolutionNodeLogic:
 
     def test_m2_resolve_helpers_sets_current_phase(self):
         """Test M2: resolve_helpers_node explicitly sets current_phase field"""
-        from src.orchestration.state_machine import resolve_helpers_node
+        from src.orchestration.nodes.outcome_nodes import resolve_helpers_node
         from src.models.game_state import GamePhase
 
         state = {

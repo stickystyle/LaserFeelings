@@ -15,7 +15,7 @@ from src.models.messages import Message, MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 
 # These imports will fail until implementations exist (TDD phase)
-from src.orchestration.state_machine import TurnOrchestrator
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 
 # Try to import fakeredis for testing, fall back to unittest.mock if not available
 try:
@@ -1294,14 +1294,14 @@ class TestLaserFeelingsContracts:
 
     def test_laser_feelings_question_node_exists(self):
         """Verify laser_feelings_question_node function exists in state machine"""
-        from src.orchestration.state_machine import laser_feelings_question_node
+        from src.orchestration.nodes.outcome_nodes import laser_feelings_question_node
 
         # Node function must exist and be callable
         assert callable(laser_feelings_question_node)
 
     def test_check_laser_feelings_conditional_edge_exists(self):
         """Verify check_laser_feelings conditional edge function exists"""
-        from src.orchestration.state_machine import check_laser_feelings
+        from src.orchestration.nodes.conditional_edges import check_laser_feelings
 
         # Conditional edge function must exist and be callable
         assert callable(check_laser_feelings)

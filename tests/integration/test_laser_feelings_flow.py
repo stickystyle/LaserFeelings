@@ -13,7 +13,7 @@ from src.models.dice_models import LasersFeelingRollResult, RollOutcome
 from src.models.game_state import GamePhase
 from src.models.messages import MessageChannel
 from src.orchestration.message_router import MessageRouter
-from src.orchestration.state_machine import TurnOrchestrator
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 
 
 def _create_mock_job_for_no_laser_feelings_test(func, *args, **kwargs):

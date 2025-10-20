@@ -7,7 +7,10 @@ from datetime import datetime
 
 from redis import Redis
 
-from src.orchestration.state_machine import resolve_helpers_node, dice_resolution_node
+from src.orchestration.nodes.outcome_nodes import (
+    resolve_helpers_node,
+    dice_resolution_node,
+)
 from src.models.game_state import GameState
 
 

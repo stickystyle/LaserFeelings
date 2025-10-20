@@ -16,7 +16,7 @@ from src.models.dice_models import LasersFeelingRollResult
 from src.models.game_state import GamePhase
 from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
-from src.orchestration.state_machine import TurnOrchestrator
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 from src.utils.dice import parse_dice_notation, roll_dice, roll_lasers_feelings
 from src.utils.logging import setup_logging
 from src.utils.redis_cleanup import cleanup_redis_for_new_session
@@ -871,7 +871,11 @@ class DMCommandLineInterface:
                                     print(formatted_action)
 
                             # Prompt DM based on awaiting phase
-                            dm_input_result = self._prompt_for_dm_input_at_phase(awaiting_phase)
+                            # Pass turn_result so phase prompts can access current character actions
+                            dm_input_result = self._prompt_for_dm_input_at_phase(
+                                awaiting_phase,
+                                current_turn_result=turn_result
+                            )
 
                             if not dm_input_result["success"]:
                                 print(self.formatter.format_error(
@@ -1065,26 +1069,30 @@ class DMCommandLineInterface:
         redis_client = Redis.from_url(settings.redis_url, decode_responses=False)
         return MessageRouter(redis_client)
 
-    def _execute_character_suggested_roll(self) -> dict:
+    def _execute_character_suggested_roll(self, character_actions: dict | None = None) -> dict:
         """
         Execute Lasers & Feelings roll using character's suggested parameters.
 
-        Reads action_dict from current turn state, extracts roll modifiers,
-        loads character sheet for character number, and calls roll_lasers_feelings().
+        Reads action_dict from provided character_actions or current turn state,
+        extracts roll modifiers, loads character sheet for character number,
+        and calls roll_lasers_feelings().
+
+        Args:
+            character_actions: Optional dict of character actions (if None, uses self._current_turn_result)
 
         Returns:
             Dict with success: bool, roll_result: LasersFeelingRollResult or error message
         """
-        # Validate we have turn state
-        if not self._current_turn_result:
-            return {
-                "success": False,
-                "error": "No turn state available",
-                "suggestion": "Character roll suggestions are only available during adjudication"
-            }
+        # Get character actions from parameter or current turn state
+        if character_actions is None:
+            if not self._current_turn_result:
+                return {
+                    "success": False,
+                    "error": "No turn state available",
+                    "suggestion": "Character roll suggestions are only available during adjudication"
+                }
+            character_actions = self._current_turn_result.get("character_actions", {})
 
-        # Get character actions from turn state
-        character_actions = self._current_turn_result.get("character_actions", {})
         if not character_actions:
             return {
                 "success": False,
@@ -1286,12 +1294,13 @@ class DMCommandLineInterface:
         else:
             return "Available commands: narrate text, /roll [dice], success, fail, /info, /quit"
 
-    def _prompt_for_dm_input_at_phase(self, awaiting_phase: str) -> dict:
+    def _prompt_for_dm_input_at_phase(self, awaiting_phase: str, current_turn_result: dict | None = None) -> dict:
         """
         Prompt DM for input based on which phase is waiting.
 
         Args:
             awaiting_phase: The phase that's waiting for DM input
+            current_turn_result: Optional current turn result dict with character_actions
 
         Returns:
             Dict with success, input_type, and data fields
@@ -1379,7 +1388,12 @@ class DMCommandLineInterface:
                         }
                 else:
                     # No notation - use character's suggested roll
-                    lf_result = self._execute_character_suggested_roll()
+                    # Pass character_actions from current_turn_result if available
+                    character_actions = None
+                    if current_turn_result:
+                        character_actions = current_turn_result.get("character_actions")
+
+                    lf_result = self._execute_character_suggested_roll(character_actions=character_actions)
 
                     if not lf_result["success"]:
                         return lf_result  # Return error

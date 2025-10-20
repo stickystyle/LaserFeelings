@@ -570,7 +570,7 @@ def test_state_machine_node_fetches_ic_messages_before_worker_dispatch(
     mock_queue.enqueue = MagicMock(side_effect=mock_enqueue)
 
     # Act: Create state machine node using factory
-    from src.orchestration.state_machine import _create_character_action_node
+    from src.orchestration.nodes.action_nodes import _create_character_action_node
 
     character_action_node = _create_character_action_node(mock_queue, router)
 

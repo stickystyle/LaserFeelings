@@ -12,7 +12,7 @@ from rq import Queue
 from src.interface.dm_cli import DMCommandLineInterface, DMCommandParser
 from src.models.dice_models import RollOutcome
 from src.models.game_state import GamePhase
-from src.orchestration.state_machine import TurnOrchestrator
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 from src.utils.dice import roll_lasers_feelings
 
 

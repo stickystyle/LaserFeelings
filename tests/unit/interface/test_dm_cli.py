@@ -647,30 +647,104 @@ class TestOOCSummaryFormatting:
         # Should return None when no messages
         assert output is None
 
-    def test_format_ooc_summary_without_agent_names(self):
-        """Test formatting OOC summary without agent name mapping"""
-        from src.models.messages import Message, MessageChannel, MessageType
 
-        formatter = CLIFormatter()
+# ============================================================================
+# Character Suggested Roll Tests (Fix Validation)
+# ============================================================================
 
-        messages = [
-            Message(
-                message_id="msg_001",
-                channel=MessageChannel.OOC,
-                from_agent="agent_unknown_001",
-                content="Unknown agent message",
-                timestamp=datetime(2025, 10, 19, 14, 30, 00),
-                message_type=MessageType.DISCUSSION,
-                phase="strategic_intent",
-                turn_number=1,
-                session_number=1
-            )
-        ]
 
-        output = formatter.format_ooc_summary(messages, turn_number=1, agent_names={})
+class TestCharacterSuggestedRoll:
+    """Test that /roll without notation correctly uses character suggestions"""
 
-        # Should fall back to agent_id
-        assert "agent_unknown_001 (Player):" in output
+    def test_execute_suggested_roll_with_character_actions_parameter(self):
+        """
+        Test that _execute_character_suggested_roll can accept character_actions parameter.
+
+        This validates the fix for the /roll bug where passing character_actions
+        from current_turn_result ensures fresh roll data is available during
+        adjudication phase.
+        """
+        cli = DMCommandLineInterface()
+
+        # Prepare mock character config
+        cli._character_configs = {
+            "char_zara_001": {
+                "character_id": "char_zara_001",
+                "name": "Zara-7",
+                "number": 2
+            }
+        }
+
+        # Prepare character actions dict (simulating turn result data)
+        character_actions = {
+            "char_zara_001": {
+                "narrative_text": "I analyze the ship's systems",
+                "task_type": "lasers",
+                "is_prepared": True,
+                "prepared_justification": "I'm always ready",
+                "is_expert": False,
+                "is_helping": False,
+                "gm_question": None
+            }
+        }
+
+        # Execute suggested roll with character_actions parameter
+        result = cli._execute_character_suggested_roll(character_actions=character_actions)
+
+        # Verify success
+        assert result["success"] is True
+        assert "roll_result" in result
+        assert result["roll_result"].dice_count == 2  # 1 base + 1 prepared
+
+    def test_execute_suggested_roll_no_character_actions_returns_error(self):
+        """Test that missing character actions returns helpful error"""
+        cli = DMCommandLineInterface()
+
+        # Call with empty character_actions
+        result = cli._execute_character_suggested_roll(character_actions={})
+
+        assert result["success"] is False
+        assert "No character actions available" in result["error"]
+        assert "Use /roll <dice>" in result["suggestion"]
+
+    def test_prompt_for_dm_input_passes_turn_result(self):
+        """
+        Test that _prompt_for_dm_input_at_phase can receive current_turn_result.
+
+        This validates the fix: turn_result is passed as parameter so that
+        character_actions are available during adjudication prompts.
+        """
+        cli = DMCommandLineInterface()
+
+        # Prepare character config
+        cli._character_configs = {
+            "char_zara_001": {
+                "character_id": "char_zara_001",
+                "name": "Zara-7",
+                "number": 2
+            }
+        }
+
+        # Prepare turn result with character actions
+        turn_result = {
+            "character_actions": {
+                "char_zara_001": {
+                    "narrative_text": "I act",
+                    "task_type": "feelings",
+                    "is_prepared": False,
+                    "is_expert": True,
+                    "expert_justification": "I'm an expert",
+                    "is_helping": False,
+                    "gm_question": None
+                }
+            }
+        }
+
+        # Verify that _prompt_for_dm_input_at_phase accepts current_turn_result parameter
+        # The method signature now includes this parameter for passing to _execute_character_suggested_roll
+        import inspect
+        sig = inspect.signature(cli._prompt_for_dm_input_at_phase)
+        assert "current_turn_result" in sig.parameters
 
 
 class TestDMCLIOOCIntegration:

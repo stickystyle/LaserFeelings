@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # These imports will fail until implementations exist (TDD phase)
-from src.orchestrator.turn_manager import TurnManager
+from src.orchestration.turn_orchestrator import TurnOrchestrator
 
 from src.agents.base_persona import BasePersonaAgent
 from src.agents.character import CharacterAgent
@@ -92,9 +92,9 @@ def initial_game_state(standard_personality, explorer_character) -> GameState:
 
 @pytest.fixture
 def turn_manager(mock_llm_client, mock_memory_store, mock_redis):
-    """TurnManager instance with mocked dependencies"""
-    # This will fail until TurnManager is implemented
-    manager = TurnManager(
+    """TurnOrchestrator instance with mocked dependencies"""
+    # This will fail until TurnOrchestrator is implemented
+    manager = TurnOrchestrator(
         llm_client=mock_llm_client,
         memory_store=mock_memory_store,
         redis_client=mock_redis

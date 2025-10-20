@@ -6,7 +6,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from src.models.game_state import GamePhase, GameState
-from src.orchestration.state_machine import (
+from src.orchestration.nodes.outcome_nodes import (
     dice_resolution_node,
     laser_feelings_question_node,
 )
@@ -48,7 +48,7 @@ class TestLaserFeelingsDetection:
         }
 
         # Mock roll to return LASER FEELINGS (character number 2, roll exactly 2)
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             mock_roll.return_value = MagicMock(
                 character_number=2,
                 task_type="lasers",
@@ -104,7 +104,7 @@ class TestLaserFeelingsDetection:
         }
 
         # Mock roll to return normal success (no exact match)
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             mock_roll.return_value = MagicMock(
                 character_number=2,
                 task_type="lasers",
@@ -158,7 +158,7 @@ class TestLaserFeelingsDetection:
             "successful_helper_counts": {"char_zara_001": 2}  # 2 successful helpers
         }
 
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             mock_roll.return_value = MagicMock(
                 character_number=2,
                 task_type="lasers",
@@ -271,7 +271,7 @@ class TestLaserFeelingsEdgeCases:
         }
 
         # Mock roll with TWO exact matches
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             mock_roll.return_value = MagicMock(
                 character_number=2,
                 task_type="lasers",
@@ -329,7 +329,7 @@ class TestLaserFeelingsEdgeCases:
         }
 
         # Roll exactly the character number (which is a success)
-        with patch('src.orchestration.state_machine.roll_lasers_feelings') as mock_roll:
+        with patch('src.orchestration.nodes.outcome_nodes.roll_lasers_feelings') as mock_roll:
             mock_roll.return_value = MagicMock(
                 character_number=2,
                 task_type="lasers",
