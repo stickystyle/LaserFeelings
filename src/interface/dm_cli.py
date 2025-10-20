@@ -14,7 +14,6 @@ from redis import Redis
 from src.config.settings import get_settings
 from src.models.dice_models import LasersFeelingRollResult
 from src.models.game_state import GamePhase
-from src.models.messages import MessageChannel, MessageType
 from src.orchestration.message_router import MessageRouter
 from src.orchestration.turn_orchestrator import TurnOrchestrator
 from src.utils.dice import parse_dice_notation, roll_dice, roll_lasers_feelings
@@ -900,13 +899,9 @@ class DMCommandLineInterface:
                         if turn_result.get("character_reactions"):
                             print("\nCharacter Reactions:")
                             character_reactions = turn_result["character_reactions"]
-                            for char_id, reaction_dict in character_reactions.items():
-                                # Extract narrative text from Reaction model dict
-                                reaction_text = (
-                                    reaction_dict.get("narrative_text", str(reaction_dict))
-                                    if reaction_dict
-                                    else ""
-                                )
+                            for char_id, reaction_text in character_reactions.items():
+                                # reaction_text is already a string from the state
+                                # (character_reactions: dict[str, str] from GameState)
 
                                 # Get character name
                                 char_name = self._get_character_name(char_id)
@@ -1475,7 +1470,7 @@ class DMCommandLineInterface:
                 }
 
             # Display new questions with agent IDs
-            print(f"\nNew questions this round:")
+            print("\nNew questions this round:")
             question_map = {}  # Map question number to agent_id
             for idx, msg in enumerate(new_questions, 1):
                 agent_name = self._get_agent_name(msg.from_agent)
@@ -1538,7 +1533,7 @@ class DMCommandLineInterface:
                 print(f"✓ Answer recorded for {agent_name}")
 
             if force_finish:
-                print(f"\n✓ Skipping remaining clarification rounds. Proceeding to strategy phase...")
+                print("\n✓ Skipping remaining clarification rounds. Proceeding to strategy phase...")
             else:
                 print(f"\n✓ {len(answers_dict)} answer(s) recorded. Checking for follow-up questions...")
 
