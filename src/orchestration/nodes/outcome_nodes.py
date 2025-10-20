@@ -438,31 +438,35 @@ def _create_dm_outcome_node(router: MessageRouter):
             session_number=state.get("session_number"),
         )
 
-        # Route LASER FEELINGS answer to character if provided
+        # Route LASER FEELINGS answer to player (OOC) if provided
+        # LASER FEELINGS insights are for the player strategically, not the character
         laser_feelings_answer = state.get("laser_feelings_answer")
         if laser_feelings_answer:
-            # Get character ID from dice roll result
+            # Get agent ID from dice roll result
+            agent_id = None
+            # Try to find the agent that rolled LASER FEELINGS
             character_id = state.get("dice_action_character")
-            if not character_id:
-                # Fallback: Get first active agent and map to character
-                if state["active_agents"]:
-                    agent_id = state["active_agents"][0]
-                    character_id = _get_character_id_for_agent(agent_id)
-
             if character_id:
-                logger.info(f"Routing LASER FEELINGS answer to {character_id}")
+                # Map character back to agent
+                for active_agent_id in state["active_agents"]:
+                    if _get_character_id_for_agent(active_agent_id) == character_id:
+                        agent_id = active_agent_id
+                        break
+
+            if agent_id:
+                logger.info(f"Routing LASER FEELINGS insight to player {agent_id} (OOC)")
                 router.add_message(
-                    channel=MessageChannel.P2C,
+                    channel=MessageChannel.OOC,
                     from_agent="dm",
-                    content=f"[LASER FEELINGS Insight]: {laser_feelings_answer}",
-                    message_type=MessageType.DIRECTIVE,
+                    content=f"[LASER FEELINGS]: {laser_feelings_answer}",
+                    message_type=MessageType.NARRATION,
                     phase=GamePhase.DM_OUTCOME.value,
                     turn_number=state["turn_number"],
-                    to_agents=[character_id],
+                    to_agents=[agent_id],
                     session_number=state.get("session_number"),
                 )
             else:
-                logger.warning("Cannot route LASER FEELINGS answer: no character_id found")
+                logger.warning("Cannot route LASER FEELINGS answer: no agent_id found")
 
         return {
             **state,

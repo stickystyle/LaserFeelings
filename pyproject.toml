@@ -21,6 +21,7 @@ dependencies = [
     "rq>=2.6.0",
     "ruff>=0.14.1",
     "tenacity>=9.1.2",
+    "textual>=6.3.0",
 ]
 
 [project.scripts]

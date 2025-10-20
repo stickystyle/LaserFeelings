@@ -1581,8 +1581,23 @@ class DMCommandLineInterface:
         elif awaiting_phase == "laser_feelings_question":
             # Prompt for LASER FEELINGS answer
             print("\n=== LASER FEELINGS - DM Answer Required ===")
-            print("The character rolled LASER FEELINGS and asked a question.")
-            print("Provide an honest answer to their question.")
+
+            # Extract the character's question from laser_feelings_data
+            turn_result = current_turn_result or self._current_turn_result or {}
+            laser_feelings_data = turn_result.get("laser_feelings_data", {})
+            character_id = laser_feelings_data.get("character_id", "unknown")
+            gm_question = laser_feelings_data.get("gm_question")
+
+            character_name = self._get_character_name(character_id)
+
+            if gm_question:
+                print(f"\n{character_name} asks:")
+                print(f'  "{gm_question}"')
+                print("\nProvide an honest answer to their question:")
+            else:
+                print("The character rolled LASER FEELINGS and asked a question.")
+                print("Provide an honest answer to their question.")
+
             print(self.formatter.format_awaiting_dm_input(
                 current_phase=GamePhase.LASER_FEELINGS_QUESTION
             ))

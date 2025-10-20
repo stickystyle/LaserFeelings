@@ -20,11 +20,9 @@ def validation_retry_node(state: GameState) -> GameState:
     """
     logger.warning(f"[VALIDATION RETRY] Attempt {state['validation_attempt'] + 1}/3")
 
-    # Get validation failures
-    failures = state["validation_failures"]
-
     # TODO: In full implementation, re-dispatch character jobs with stricter prompts
     # For MVP, we increment attempt and proceed
+    # validation_failures = state["validation_failures"]  # Available for future use
 
     return {
         **state,

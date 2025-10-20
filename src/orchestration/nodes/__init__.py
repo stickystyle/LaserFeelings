@@ -56,7 +56,9 @@ from src.orchestration.nodes.rollback_nodes import rollback_handler_node
 
 # Strategic nodes
 from src.orchestration.nodes.strategic_nodes import (
+    _create_character_reformulation_node,
     _create_p2c_directive_node,
+    _create_player_reformulation_node,
     _create_strategic_intent_node,
 )
 
@@ -82,7 +84,9 @@ __all__ = [
     "_create_dm_clarification_wait_node",
     "dm_narration_node",
     # Strategic nodes
+    "_create_character_reformulation_node",
     "_create_p2c_directive_node",
+    "_create_player_reformulation_node",
     "_create_strategic_intent_node",
     # Action nodes
     "_create_character_action_node",

@@ -173,3 +173,230 @@ def _create_p2c_directive_node(router: MessageRouter):
         }
 
     return p2c_directive_node
+
+
+def _create_player_reformulation_node(base_persona_queue: Queue):
+    """
+    Factory for player_reformulation_node with injected dependencies.
+
+    After a LASER FEELINGS question is answered, the player layer receives the new
+    information and reconsiders their strategy. This allows players to adapt tactics
+    based on the DM's answer.
+
+    Args:
+        base_persona_queue: RQ Queue for base persona worker jobs
+
+    Returns:
+        Node function with captured queue dependency
+    """
+
+    def player_reformulation_node(state: GameState) -> GameState:
+        """
+        LASER FEELINGS Phase 2: After DM answers LASER FEELINGS question, player reformulates.
+
+        Phase flow after LASER FEELINGS:
+        1. DM answers LASER FEELINGS question
+        2. Player receives answer and updates strategic intent
+        3. Character receives new P2C directive and reformulates action
+        4. Use SAME dice roll that triggered LASER FEELINGS
+
+        Args:
+            state: Current game state with laser_feelings_answer populated
+
+        Returns:
+            Updated state with reformulated strategic_intents
+        """
+        logger.info(f"[PHASE: PLAYER_REFORMULATION] Turn {state['turn_number']}")
+
+        laser_data = state.get("laser_feelings_data", {})
+        character_id = laser_data.get("character_id", "unknown")
+        laser_answer = state.get("laser_feelings_answer", "")
+
+        if not laser_answer:
+            logger.warning("No LASER FEELINGS answer available, skipping reformulation")
+            return {
+                **state,
+                "current_phase": GamePhase.CHARACTER_REFORMULATION.value,
+                "phase_start_time": datetime.now(),
+            }
+
+        # Get agent_id for this character (reverse lookup from character_id)
+        agent_id = None
+        for active_agent_id in state["active_agents"]:
+            if _get_character_id_for_agent(active_agent_id) == character_id:
+                agent_id = active_agent_id
+                break
+
+        if not agent_id:
+            logger.error(f"Could not find agent_id for character {character_id}")
+            return {
+                **state,
+                "current_phase": GamePhase.CHARACTER_REFORMULATION.value,
+                "phase_start_time": datetime.now(),
+            }
+
+        logger.debug(f"Reformulating strategy for {agent_id} based on LASER FEELINGS answer: {laser_answer}")
+
+        # Get original action and context
+        original_action = laser_data.get("original_action", {})
+        original_narration = original_action.get("narrative_text", "")
+
+        # Placeholder personality config (same as strategic_intent_node)
+        placeholder_personality = {
+            "analytical_score": 0.8,
+            "risk_tolerance": 0.3,
+            "detail_oriented": 0.9,
+            "emotional_memory": 0.2,
+            "assertiveness": 0.5,
+            "cooperativeness": 0.7,
+            "openness": 0.6,
+            "rule_adherence": 0.8,
+            "roleplay_intensity": 0.6,
+            "base_decay_rate": 0.3,
+        }
+        placeholder_character_number = 2
+
+        # Dispatch reformulation job
+        job = base_persona_queue.enqueue(
+            "src.workers.base_persona_worker.reformulate_strategy_after_laser_feelings",
+            args=(
+                agent_id,
+                state["dm_narration"],
+                original_narration,
+                laser_answer,
+                state["retrieved_memories"].get(agent_id, []),
+                placeholder_personality,
+                placeholder_character_number,
+            ),
+            job_timeout=30,
+            result_ttl=300,
+            failure_ttl=600,
+        )
+
+        logger.debug(f"Waiting for reformulated strategy from {agent_id}")
+
+        # Wait for reformulation to complete
+        timeout = 35
+        _poll_job_with_backoff(job, timeout)
+
+        if job.is_failed:
+            raise JobFailedError(f"Strategy reformulation job failed for {agent_id}: {job.exc_info}")
+
+        reformulated_intent = job.result
+        logger.info(f"Player {agent_id} reformulated strategy: {reformulated_intent}")
+
+        # Update strategic intents with reformulated version
+        strategic_intents = state.get("strategic_intents", {}).copy()
+        strategic_intents[agent_id] = reformulated_intent
+
+        return {
+            **state,
+            "strategic_intents": strategic_intents,
+            "current_phase": GamePhase.CHARACTER_REFORMULATION.value,
+            "phase_start_time": datetime.now(),
+        }
+
+    return player_reformulation_node
+
+
+def _create_character_reformulation_node(character_queue: Queue, router: MessageRouter):
+    """
+    Factory for character_reformulation_node with injected dependencies.
+
+    After player reformulates strategy, character receives new P2C directive and
+    reformulates their action. The reformulated action uses the SAME dice roll
+    that triggered LASER FEELINGS (per Lasers & Feelings rules).
+
+    Args:
+        character_queue: RQ Queue for character worker jobs
+        router: MessageRouter for fetching IC messages
+
+    Returns:
+        Node function with captured queue dependency
+    """
+
+    def character_reformulation_node(state: GameState) -> GameState:
+        """
+        LASER FEELINGS Phase 3: Character reformulates action based on new player directive.
+
+        Args:
+            state: Current game state with reformulated strategic_intents
+
+        Returns:
+            Updated state with reformulated character_actions ready for outcome
+        """
+        logger.info(f"[PHASE: CHARACTER_REFORMULATION] Turn {state['turn_number']}")
+
+        laser_data = state.get("laser_feelings_data", {})
+        character_id = laser_data.get("character_id", "unknown")
+
+        # Find agent for this character
+        agent_id = None
+        for active_agent_id in state["active_agents"]:
+            if _get_character_id_for_agent(active_agent_id) == character_id:
+                agent_id = active_agent_id
+                break
+
+        if not agent_id:
+            logger.error(f"Could not find agent_id for character {character_id}")
+            return {
+                **state,
+                "current_phase": GamePhase.DM_OUTCOME.value,
+                "phase_start_time": datetime.now(),
+            }
+
+        # Send P2C directive with reformulated strategy
+        reformulated_intent = state.get("strategic_intents", {}).get(agent_id, "")
+
+        router.add_message(
+            channel=MessageChannel.P2C,
+            from_agent=agent_id,
+            content=reformulated_intent,
+            message_type=MessageType.DIRECTIVE,
+            phase=GamePhase.CHARACTER_REFORMULATION.value,
+            turn_number=state["turn_number"],
+            to_agents=[character_id],
+            session_number=state.get("session_number"),
+        )
+
+        logger.debug(f"Sent P2C reformulation directive from {agent_id} to {character_id}")
+
+        # Dispatch reformulation job
+        job = character_queue.enqueue(
+            "src.workers.character_worker.reformulate_action_after_laser_feelings",
+            args=(
+                character_id,
+                reformulated_intent,
+                state["dm_narration"],
+                {},  # scene_context (simplified for MVP)
+                {},  # character_sheet_config (placeholder)
+            ),
+            job_timeout=30,
+            result_ttl=300,
+            failure_ttl=600,
+        )
+
+        logger.debug(f"Waiting for reformulated action from {character_id}")
+
+        # Wait for reformulation to complete
+        timeout = 35
+        _poll_job_with_backoff(job, timeout)
+
+        if job.is_failed:
+            raise JobFailedError(f"Character reformulation job failed for {character_id}: {job.exc_info}")
+
+        reformulated_action = job.result
+        logger.info(f"Character {character_id} reformulated action: {reformulated_action.get('narrative_text', 'N/A')}")
+
+        # Update character_actions with reformulated version
+        character_actions = state.get("character_actions", {}).copy()
+        character_actions[character_id] = reformulated_action
+
+        return {
+            **state,
+            "character_actions": character_actions,
+            "current_phase": GamePhase.DM_OUTCOME.value,
+            "phase_start_time": datetime.now(),
+        }
+
+    return character_reformulation_node

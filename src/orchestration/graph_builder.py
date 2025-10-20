@@ -159,9 +159,8 @@ def build_turn_graph(redis_client: Redis) -> StateGraph:
         {"question": "laser_feelings_question", "outcome": "dm_outcome"},
     )
 
-    workflow.add_edge(
-        "laser_feelings_question", "dm_outcome"
-    )  # After GM answers, proceed to outcome
+    # After LASER FEELINGS question answered, proceed to outcome
+    workflow.add_edge("laser_feelings_question", "dm_outcome")
     workflow.add_edge("dm_outcome", "character_reaction")
     workflow.add_edge("character_reaction", "memory_consolidation")
 

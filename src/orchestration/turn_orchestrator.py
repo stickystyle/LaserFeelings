@@ -226,7 +226,7 @@ class TurnOrchestrator:
             # Phase 2 Issue #3: DM answered LASER FEELINGS question
             current_state["laser_feelings_answer"] = dm_input_data["answer"]
             current_state["waiting_for_gm_answer"] = False
-            # Transition to dm_outcome phase (skip re-roll for MVP)
+            # After LASER FEELINGS answer, proceed to outcome narration with the original successful action
             current_state["current_phase"] = GamePhase.DM_OUTCOME.value
 
         elif dm_input_type == "outcome":

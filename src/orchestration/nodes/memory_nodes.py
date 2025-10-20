@@ -131,19 +131,18 @@ def memory_consolidation_node(state: GameState) -> GameState:
     """
     logger.info(f"[PHASE: MEMORY_CONSOLIDATION] Turn {state['turn_number']}")
 
-    # Collect turn events for memory storage
-    turn_events = {
-        "turn_number": state["turn_number"],
-        "dm_narration": state["dm_narration"],
-        "strategic_intents": state["strategic_intents"],
-        "character_actions": state["character_actions"],
-        "dm_outcome": state.get("dm_outcome", ""),
-        "character_reactions": state["character_reactions"],
-    }
-
     logger.debug(f"Consolidating memories for turn {state['turn_number']} (MVP: logged only)")
 
     # TODO: Uncomment when memory system is integrated
+    # Collect turn events for memory storage
+    # turn_events = {
+    #     "turn_number": state["turn_number"],
+    #     "dm_narration": state["dm_narration"],
+    #     "strategic_intents": state["strategic_intents"],
+    #     "character_actions": state["character_actions"],
+    #     "dm_outcome": state.get("dm_outcome", ""),
+    #     "character_reactions": state["character_reactions"],
+    # }
     # memory_system.add_episode(
     #     session_number=state["session_number"],
     #     turn_number=state["turn_number"],

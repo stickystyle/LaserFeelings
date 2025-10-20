@@ -398,3 +398,95 @@ def formulate_clarifying_question(
     except Exception as e:
         logger.error(f"Worker formulate_clarifying_question failed for {agent_id}: {e}")
         raise
+
+
+def reformulate_strategy_after_laser_feelings(
+    agent_id: str,
+    dm_narration: str,
+    original_action: str,
+    laser_answer: str,
+    memories: list[dict[str, Any]],
+    personality_config: dict[str, Any],
+    character_number: int,
+) -> dict[str, Any]:
+    """
+    RQ worker function: BasePersonaAgent reformulates strategy after LASER FEELINGS answer.
+
+    After rolling LASER FEELINGS (exact match), the player receives honest answer from DM.
+    This worker function asks the player agent to reconsider their strategy based on the
+    new information before the character performs a reformulated action.
+
+    Worker pattern: Imports agent class inside function (runs in separate process).
+
+    Args:
+        agent_id: Unique agent identifier
+        dm_narration: Original DM narration that prompted the action
+        original_action: The original character action (before reformulation)
+        laser_answer: The DM's honest answer to the LASER FEELINGS question
+        memories: List of relevant memories
+        personality_config: Personality configuration dict
+        character_number: Character's Lasers & Feelings number (2-5)
+
+    Returns:
+        Reformulated strategic goal dict
+
+    Raises:
+        RuntimeError: When agent cannot be loaded
+        LLMCallFailed: When OpenAI API fails after retries
+    """
+    # Import dependencies inside worker (separate process)
+    import asyncio
+
+    from openai import AsyncOpenAI
+
+    from src.agents.base_persona import BasePersonaAgent
+    from src.config.settings import Settings
+    from src.models.personality import PlayerPersonality
+    from src.workers.llm_retry import llm_retry
+
+    try:
+        # Load configuration
+        settings = Settings()
+
+        # Initialize OpenAI client
+        openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+        # TODO(Phase 4): Accept memory as parameter from orchestration layer
+        memory = None
+
+        # Load agent personality from configuration
+        personality = PlayerPersonality(**personality_config)
+
+        # Initialize agent
+        agent = BasePersonaAgent(
+            agent_id=agent_id,
+            personality=personality,
+            character_number=character_number,
+            memory=memory,
+            openai_client=openai_client,
+            model="gpt-4o",
+            temperature=0.7,
+        )
+
+        # Call agent method with retry protection
+        @llm_retry
+        async def _reformulate() -> dict[str, Any]:
+            return await agent.reformulate_strategy_after_laser_feelings(
+                dm_narration=dm_narration,
+                original_action=original_action,
+                laser_answer=laser_answer,
+                memories=memories,
+            )
+
+        # Run async function in event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_reformulate())
+            return result
+        finally:
+            loop.close()
+
+    except Exception as e:
+        logger.error(f"Worker reformulate_strategy_after_laser_feelings failed for {agent_id}: {e}")
+        raise

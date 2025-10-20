@@ -585,3 +585,83 @@ OR
 
         except json.JSONDecodeError as e:
             raise LLMCallFailed(f"Failed to parse clarifying question JSON: {e}") from e
+
+    async def reformulate_strategy_after_laser_feelings(
+        self,
+        dm_narration: str,
+        original_action: str,
+        laser_answer: str,
+        memories: list[dict],
+    ) -> dict:
+        """
+        Reformulate strategic intent after receiving LASER FEELINGS answer from DM.
+
+        After rolling LASER FEELINGS (exact match), the player receives an honest answer
+        from the DM. This method reconsiders the original strategy in light of this new
+        information and formulates a potentially different approach.
+
+        Args:
+            dm_narration: Original DM narration that prompted the action
+            original_action: The original character action text (before reformulation)
+            laser_answer: The DM's honest answer to the LASER FEELINGS question
+            memories: List of relevant memories to inform the new strategy
+
+        Returns:
+            Dict with keys: {strategic_goal, reasoning, risk_assessment}
+
+        Raises:
+            LLMCallFailed: When OpenAI API fails
+        """
+        llm_client = LLMClient(self.openai_client, model=self.model, temperature=self.temperature)
+
+        memory_context = self._format_memories(memories)
+
+        prompt = f"""You are {self.agent_id}, a strategic tabletop RPG player.
+
+SITUATION:
+{dm_narration}
+
+LASER FEELINGS:
+Your character just rolled LASER FEELINGS (exact match) and asked a question. The DM just answered:
+"{laser_answer}"
+
+ORIGINAL ACTION:
+Your character's original action was: "{original_action}"
+
+YOUR TASK:
+Given this new information from the DM's honest answer, reconsider your strategy. Do you want to:
+1. Proceed with your original action as planned?
+2. Modify your approach based on this new insight?
+3. Completely pivot to a different tactic?
+
+Remember:
+- You're making a STRATEGIC decision (out-of-character), not a character action
+- Your goal is to accomplish your character's goal effectively
+- Use the new information wisely
+
+{memory_context}
+
+Respond with JSON:
+{{
+  "strategic_goal": "What you're now trying to accomplish after learning this",
+  "reasoning": "Why you chose this approach",
+  "risk_assessment": "What could go wrong with this new plan"
+}}"""
+
+        response = await llm_client.call_llm(prompt)
+
+        try:
+            # Try to parse JSON from response
+            result = json.loads(response)
+            return {
+                "strategic_goal": result.get("strategic_goal", ""),
+                "reasoning": result.get("reasoning", ""),
+                "risk_assessment": result.get("risk_assessment", ""),
+            }
+        except json.JSONDecodeError:
+            # If not JSON, return as-is
+            return {
+                "strategic_goal": response,
+                "reasoning": "Direct text response from agent",
+                "risk_assessment": "N/A",
+            }

@@ -1784,3 +1784,109 @@ class TestLaserFeelingsAnswerPrompt:
         assert "data" in result
         assert "laser_feelings_answer" in result["data"]
         assert result["data"]["laser_feelings_answer"] is None
+
+    def test_laser_feelings_question_phase_displays_gm_question(self, capsys, tmp_path, monkeypatch):
+        """Test that DM sees the character's question during laser_feelings_question phase"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+        cli._current_phase = GamePhase.LASER_FEELINGS_QUESTION
+
+        # Set up turn state with laser_feelings_data containing the character's question
+        current_turn_result = {
+            "laser_feelings_data": {
+                "character_id": "char_zara_001",
+                "gm_question": "Can I detect the ship's power signature?"
+            }
+        }
+
+        # Mock input() to provide DM answer
+        with patch('builtins.input', return_value="Yes, you detect a faint power signature"):
+            result = cli._prompt_for_dm_input_at_phase(
+                "laser_feelings_question",
+                current_turn_result=current_turn_result
+            )
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify the character name is displayed
+        assert "Zara-7 asks:" in captured.out
+
+        # Verify the actual question is displayed (this was the bug - it was missing)
+        assert "Can I detect the ship's power signature?" in captured.out
+
+        # Verify the DM's answer was captured
+        assert result["success"] is True
+        assert "data" in result
+        assert result["data"]["answer"] == "Yes, you detect a faint power signature"
+
+    def test_laser_feelings_question_phase_fallback_without_question(self, capsys, tmp_path, monkeypatch):
+        """Test fallback message when gm_question is missing"""
+        import json
+
+        # Create temporary config directory
+        config_dir = tmp_path / "config" / "personalities"
+        config_dir.mkdir(parents=True)
+
+        # Create test character config file
+        char_config = {
+            "character_id": "char_zara_001",
+            "agent_id": "agent_alex_001",
+            "name": "Zara-7",
+            "number": 2
+        }
+        config_file = config_dir / "char_zara_001_character.json"
+        with open(config_file, "w") as f:
+            json.dump(char_config, f)
+
+        # Change to tmp_path so config/personalities is found
+        monkeypatch.chdir(tmp_path)
+
+        cli = DMCommandLineInterface()
+        cli._current_phase = GamePhase.LASER_FEELINGS_QUESTION
+
+        # Set up turn state with NO gm_question
+        current_turn_result = {
+            "laser_feelings_data": {
+                "character_id": "char_zara_001",
+                "gm_question": None  # No question
+            }
+        }
+
+        # Mock input() to provide DM answer
+        with patch('builtins.input', return_value="Generic insight"):
+            result = cli._prompt_for_dm_input_at_phase(
+                "laser_feelings_question",
+                current_turn_result=current_turn_result
+            )
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify fallback message is displayed
+        assert "The character rolled LASER FEELINGS and asked a question." in captured.out
+        assert "Provide an honest answer to their question." in captured.out
+
+        # Verify the DM's answer was still captured
+        assert result["success"] is True
+        assert "data" in result
+        assert result["data"]["answer"] == "Generic insight"

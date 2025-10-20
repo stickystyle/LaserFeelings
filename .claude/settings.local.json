@@ -17,7 +17,8 @@
       "WebFetch(domain:neo4j.com)",
       "WebFetch(domain:openai.com)",
       "WebFetch(domain:python-rq.org)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(uv run ruff check:*)"
     ],
     "deny": [],
     "ask": []

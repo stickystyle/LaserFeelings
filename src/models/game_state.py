@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class ActionDict(TypedDict):
     """TypedDict representation of Action model for GameState character_actions"""
+
     character_id: str
     narrative_text: str
     task_type: NotRequired[Literal["lasers", "feelings"] | None]
@@ -24,6 +25,7 @@ class ActionDict(TypedDict):
 
 class GamePhase(str, Enum):
     """Turn cycle phases in LangGraph state machine"""
+
     DM_NARRATION = "dm_narration"
     MEMORY_QUERY = "memory_query"
     DM_CLARIFICATION = "dm_clarification"
@@ -32,6 +34,7 @@ class GamePhase(str, Enum):
     CONSENSUS_DETECTION = "consensus_detection"
     CHARACTER_ACTION = "character_action"
     VALIDATION = "validation"
+    CHARACTER_REFORMULATION = "character_reformulation"
     DM_ADJUDICATION = "dm_adjudication"
     DICE_RESOLUTION = "dice_resolution"
     LASER_FEELINGS_QUESTION = "laser_feelings_question"
@@ -53,12 +56,13 @@ class GameState(TypedDict):
         "consensus_detection",
         "character_action",
         "validation",
+        "character_reformulation",
         "dm_adjudication",
         "dice_resolution",
         "laser_feelings_question",
         "dm_outcome",
         "character_reaction",
-        "memory_storage"
+        "memory_storage",
     ]
     phase_start_time: datetime
     turn_number: int
@@ -88,7 +92,8 @@ class GameState(TypedDict):
 
     # Memory retrieval
     retrieved_memories: dict[str, list[dict]]  # agent_id -> memory list
-    retrieved_memories_post_clarification: NotRequired[dict[str, list[dict]]]  # agent_id -> memories after clarifications
+    # agent_id -> memories after clarifications
+    retrieved_memories_post_clarification: NotRequired[dict[str, list[dict]]]
 
     # Dice resolution - Uses multi-die success counting system
     # Lasers & Feelings rules: Roll 1d6 per die, each die succeeds independently
@@ -111,11 +116,14 @@ class GameState(TypedDict):
     # DEPRECATED fields (kept for backward compatibility)
     dice_result: NotRequired[int]  # DEPRECATED: Use individual_rolls[0] instead
     dice_success: NotRequired[bool]  # DEPRECATED: Use die_successes or total_successes
-    dice_complication: NotRequired[bool]  # DEPRECATED: "complication" is old terminology for LASER FEELINGS. Use len(laser_feelings_indices) > 0
+    # DEPRECATED: "complication" is old terminology for LASER FEELINGS.
+    # Use len(laser_feelings_indices) > 0
+    dice_complication: NotRequired[bool]
     laser_feelings_occurred: NotRequired[bool]  # DEPRECATED: Use len(laser_feelings_indices) > 0
 
     # Helper resolution - Phase 1 Issue #2
-    successful_helper_counts: NotRequired[dict[str, int]]  # character_id -> count of successful helpers (≥1 success)
+    # character_id -> count of successful helpers (≥1 success)
+    successful_helper_counts: NotRequired[dict[str, int]]
 
     # Session tracking
     session_number: int  # Current game session number
@@ -127,8 +135,10 @@ class GameState(TypedDict):
     dm_review_required: NotRequired[bool]  # Flag for DM manual review after validation failures
 
     # LASER FEELINGS state (Phase 2 Issue #3)
-    laser_feelings_data: NotRequired[dict]  # Stores original roll, action, dice parameters for re-roll
-    waiting_for_gm_answer: NotRequired[bool]  # True when paused waiting for GM answer to LASER FEELINGS question
+    # Stores original roll, action, dice parameters for re-roll
+    laser_feelings_data: NotRequired[dict]
+    # True when paused waiting for GM answer to LASER FEELINGS question
+    waiting_for_gm_answer: NotRequired[bool]
 
     # DM Clarification state
     clarification_round: NotRequired[int]  # Current round number (1-based)
@@ -175,6 +185,7 @@ class ValidationResult(BaseModel):
 
 class Stance(str, Enum):
     """Stance classification for consensus detection"""
+
     AGREE = "agree"
     DISAGREE = "disagree"
     NEUTRAL = "neutral"
@@ -186,13 +197,9 @@ class Position(BaseModel):
 
     agent_id: str
     stance: Stance
-    confidence: float = Field(
-        ge=0.0, le=1.0,
-        description="Confidence in stance classification"
-    )
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in stance classification")
     supporting_text: str | None = Field(
-        default=None,
-        description="Text excerpt supporting this classification"
+        default=None, description="Text excerpt supporting this classification"
     )
 
     model_config = {"use_enum_values": True}
