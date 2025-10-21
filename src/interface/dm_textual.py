@@ -464,13 +464,17 @@ class DMTextualInterface(App):
 
                         # Resume turn with empty answers - signals orchestrator to proceed to
                         # SECOND_MEMORY_QUERY phase (see CLAUDE.md "Clarifying Questions Phase")
-                        self._run_blocking_in_background(
+                        # CRITICAL: Must await the result and check for next interrupt
+                        turn_result = await self._run_blocking_call(
                             lambda: self.orchestrator.resume_turn_with_dm_input(
                                 session_number=self.session_number,
                                 dm_input_type="dm_clarification_answer",
                                 dm_input_data={"answers": [], "force_finish": False},
                             )
                         )
+
+                        # Check if turn continues to another interrupt
+                        await self._handle_turn_result_continuation(turn_result)
 
                 except (ConnectionError, TimeoutError):
                     self.write_game_log(
@@ -487,14 +491,18 @@ class DMTextualInterface(App):
                 self._clarification_mode = False
                 self._pending_questions = None
 
-                # Signal orchestrator to skip remaining clarification - fire-and-forget
-                self._run_blocking_in_background(
+                # Signal orchestrator to skip remaining clarification
+                # Await the result and handle continuation to next interrupt
+                turn_result = await self._run_blocking_call(
                     lambda: self.orchestrator.resume_turn_with_dm_input(
                         session_number=self.session_number,
                         dm_input_type="dm_clarification_answer",
                         dm_input_data={"answers": [], "force_finish": True},
                     )
                 )
+
+                # Check if turn continues to another interrupt
+                await self._handle_turn_result_continuation(turn_result)
                 return
 
             # Check for "done" embedded in answer (e.g., "1 done")
@@ -806,6 +814,20 @@ class DMTextualInterface(App):
 
         except Exception as e:
             self.write_game_log(f"[red]✗ Turn execution failed:[/red] {e}")
+
+    async def _handle_turn_result_continuation(self, turn_result: dict) -> None:
+        """
+        Handle turn result continuation after resuming from an interrupt.
+
+        After resuming a turn (e.g., after clarification), check if the turn
+        continued to another interrupt point and update the UI accordingly.
+
+        Args:
+            turn_result: Result dict from resume_turn_with_dm_input
+        """
+        # Delegate to existing display_turn_result method which handles
+        # both interrupted and completed turns
+        self.display_turn_result(turn_result)
 
     def display_turn_result(self, turn_result: dict) -> None:
         """Display results from completed turn or handle pause for DM input"""

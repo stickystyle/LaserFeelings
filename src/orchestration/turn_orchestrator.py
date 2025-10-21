@@ -197,18 +197,22 @@ class TurnOrchestrator:
             # Get MAX_CLARIFICATION_ROUNDS from the node (should be 3)
             MAX_CLARIFICATION_ROUNDS = 3
 
-            # Handle force_finish by setting round beyond max
+            # For MVP Phase 3: Skip follow-up clarification rounds after first answers
+            # In production (Phase 7), agents would check for follow-up questions after DM answers
+            # For now, exit clarification immediately to unblock turn progression
             current_round = current_state.get("clarification_round", 1)
             if force_finish:
                 logger.info("DM requested force finish - skipping remaining clarification rounds")
-                current_state["clarification_round"] = MAX_CLARIFICATION_ROUNDS + 1  # Force exit
+                current_state["clarification_round"] = MAX_CLARIFICATION_ROUNDS + 1
             else:
-                current_state["clarification_round"] = current_round + 1
+                # Always skip follow-ups after first round (Phase 3 MVP behavior)
+                logger.info("First clarification round answered - skipping follow-ups (Phase 3 MVP)")
+                current_state["clarification_round"] = MAX_CLARIFICATION_ROUNDS + 1
 
             current_state["awaiting_dm_clarifications"] = False
 
-            # Keep phase as DM_CLARIFICATION so conditional edge loops back to collect
-            # The collect node will check for follow-up questions (or exit if max rounds)
+            # Phase transition will be handled by dm_clarification_wait node and conditional routing
+            # No need to manually set current_phase here
 
         elif dm_input_type == "adjudication":
             # DM provided adjudication (needs dice? manual override?)

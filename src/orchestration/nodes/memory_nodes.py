@@ -35,7 +35,7 @@ def memory_retrieval_node(state: GameState) -> GameState:
     return {
         **state,
         "retrieved_memories": retrieved_memories,
-        "current_phase": GamePhase.STRATEGIC_INTENT.value,
+        "current_phase": GamePhase.DM_CLARIFICATION.value,
         "phase_start_time": datetime.now(),
     }
 
