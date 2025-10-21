@@ -125,6 +125,22 @@ class CharacterSheet(BaseModel):
         description="Personality quirks (e.g., 'Taps fingers when anxious')"
     )
 
+    @field_validator('name', 'character_goal')
+    @classmethod
+    def validate_non_empty_string(cls, v: str, info) -> str:
+        """Ensure name and character_goal are non-empty strings"""
+        if not v or not v.strip():
+            raise ValueError(f'{info.field_name} cannot be empty')
+        return v
+
+    @field_validator('number', mode='before')
+    @classmethod
+    def validate_number_type(cls, v):
+        """Ensure number is an integer, not a string"""
+        if isinstance(v, str):
+            raise ValueError('number must be an integer, not a string')
+        return v
+
     @property
     def approach_bias(self) -> Literal["lasers", "feelings", "balanced"]:
         """Determine preferred problem-solving approach from number"""

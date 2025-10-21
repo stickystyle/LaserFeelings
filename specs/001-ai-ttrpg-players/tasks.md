@@ -239,14 +239,14 @@ Steps:
 
 ### Unit Tests for User Story 1
 
-- [ ] T070 [P] [US1] Unit tests for AgentPersonality validation in tests/unit/models/test_personality.py
-- [ ] T071 [P] [US1] Unit tests for CharacterSheet validation in tests/unit/models/test_character_sheet.py
-- [ ] T072 [P] [US1] Unit tests for MemoryEdge temporal validation in tests/unit/models/test_memory_edge.py
-- [ ] T073 [P] [US1] Unit tests for GameState transitions in tests/unit/models/test_game_state.py
-- [ ] T074 [P] [US1] Unit tests for Message routing rules in tests/unit/models/test_messages.py
-- [ ] T075 [P] [US1] Unit tests for dice roller in tests/unit/utils/test_dice.py
-- [ ] T076 [P] [US1] Unit tests for BasePersonaAgent logic in tests/unit/agents/test_base_persona.py
-- [ ] T077 [P] [US1] Unit tests for CharacterAgent logic in tests/unit/agents/test_character.py
+- [X] T070 [P] [US1] Unit tests for AgentPersonality validation in tests/unit/models/test_personality.py
+- [X] T071 [P] [US1] Unit tests for CharacterSheet validation in tests/unit/models/test_character_sheet.py
+- [X] T072 [P] [US1] Unit tests for MemoryEdge temporal validation in tests/unit/models/test_memory_edge.py
+- [X] T073 [P] [US1] Unit tests for GameState transitions in tests/unit/models/test_game_state.py
+- [X] T074 [P] [US1] Unit tests for Message routing rules in tests/unit/models/test_messages.py
+- [X] T075 [P] [US1] Unit tests for dice roller in tests/unit/utils/test_dice.py
+- [X] T076 [P] [US1] Unit tests for BasePersonaAgent logic in tests/unit/agents/test_base_persona.py
+- [X] T077 [P] [US1] Unit tests for CharacterAgent logic in tests/unit/agents/test_character.py
 - [ ] T078 [P] [US1] Unit tests for MessageRouter visibility in tests/unit/orchestration/test_message_router.py
 - [ ] T079 [P] [US1] Unit tests for state machine transitions in tests/unit/orchestration/test_state_machine.py
 - [ ] T080 [P] [US1] Unit tests for Graphiti client in tests/unit/memory/test_graphiti_client.py

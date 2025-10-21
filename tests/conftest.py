@@ -237,24 +237,20 @@ def mock_openai_client():
 
 @pytest.fixture
 def mock_graphiti_client():
-    """Mock GraphitiClient for testing without Neo4j/OpenAI"""
-    from src.memory.graphiti_client import GraphitiClient
+    """Mock CorruptedTemporalMemory for testing without Neo4j/OpenAI"""
+    from src.memory.corrupted_temporal import CorruptedTemporalMemory
 
-    client = MagicMock(spec=GraphitiClient)
+    client = MagicMock(spec=CorruptedTemporalMemory)
 
-    # Configure async methods for GraphitiClient
+    # Configure async methods for CorruptedTemporalMemory
+    client.search = AsyncMock(return_value=[])
     client.create_session_episode = AsyncMock(return_value="episode_123")
-    client.query_memories_at_time = AsyncMock(return_value=[])
-    client.extract_entities = AsyncMock(return_value=[])
-    client.initialize = AsyncMock(return_value={
-        "success": True,
-        "version": "0.3.0",
-        "indexes_created": ["agent_session_temporal", "valid_at_range"]
+    client.invalidate_memory = AsyncMock(return_value=None)
+    client.get_corruption_stats = AsyncMock(return_value={
+        "total_queries": 0,
+        "corrupted_memories_returned": 0,
+        "corruption_rate": 0.0
     })
-    client.create_indexes = AsyncMock(return_value={
-        "indexes_created": ["agent_session_temporal", "valid_at_range"]
-    })
-    client.close = AsyncMock()
 
     return client
 

@@ -39,7 +39,7 @@ class TestDMClarificationCollectNode:
         """Create collect node with mocked dependencies"""
         return _create_dm_clarification_collect_node(mock_queue, mock_router)
 
-    @patch('src.orchestration.nodes.helpers._poll_job_with_backoff')
+    @patch('src.orchestration.nodes.clarification_nodes._poll_job_with_backoff')
     def test_collect_node_returns_memory_query_phase_when_no_questions(
         self, mock_poll, collect_node, mock_queue
     ):
@@ -50,7 +50,7 @@ class TestDMClarificationCollectNode:
         mock_job.is_failed = False
         mock_queue.enqueue.return_value = mock_job
 
-        # Skip the polling logic
+        # Mock polling to do nothing (job already "complete")
         mock_poll.return_value = None
 
         state = {
@@ -66,7 +66,10 @@ class TestDMClarificationCollectNode:
         assert result["current_phase"] == GamePhase.MEMORY_QUERY.value
         assert result["clarification_round"] == 1
 
-    @patch('src.orchestration.nodes.helpers._poll_job_with_backoff')
+        # Verify polling was called once per agent
+        assert mock_poll.call_count == 1
+
+    @patch('src.orchestration.nodes.clarification_nodes._poll_job_with_backoff')
     def test_collect_node_returns_dm_clarification_phase_when_questions_exist(
         self, mock_poll, collect_node, mock_queue, mock_router
     ):
@@ -77,7 +80,7 @@ class TestDMClarificationCollectNode:
         mock_job.is_failed = False
         mock_queue.enqueue.return_value = mock_job
 
-        # Skip the polling logic
+        # Mock polling to do nothing (job already "complete")
         mock_poll.return_value = None
 
         state = {
@@ -97,6 +100,9 @@ class TestDMClarificationCollectNode:
 
         # Verify question was routed to OOC
         mock_router.add_message.assert_called_once()
+
+        # Verify polling was called once per agent
+        assert mock_poll.call_count == 1
 
 
 class TestDMClarificationWaitNode:
@@ -203,7 +209,7 @@ class TestTwoNodePatternIntegration:
         """Mock MessageRouter"""
         return MagicMock()
 
-    @patch('src.orchestration.nodes.helpers._poll_job_with_backoff')
+    @patch('src.orchestration.nodes.clarification_nodes._poll_job_with_backoff')
     def test_no_questions_path_skips_wait_node(self, mock_poll, mock_queue, mock_router):
         """When no questions, collect → skip → memory_query (wait node is never entered)"""
         collect_node = _create_dm_clarification_collect_node(mock_queue, mock_router)
@@ -214,7 +220,7 @@ class TestTwoNodePatternIntegration:
         mock_job.is_failed = False
         mock_queue.enqueue.return_value = mock_job
 
-        # Skip the polling logic
+        # Mock polling to do nothing (job already "complete")
         mock_poll.return_value = None
 
         state = {
@@ -236,7 +242,10 @@ class TestTwoNodePatternIntegration:
         # Should skip to second_memory_query
         assert edge_result == "skip"
 
-    @patch('src.orchestration.nodes.helpers._poll_job_with_backoff')
+        # Verify polling was called
+        assert mock_poll.call_count == 1
+
+    @patch('src.orchestration.nodes.clarification_nodes._poll_job_with_backoff')
     def test_questions_exist_path_enters_wait_node(self, mock_poll, mock_queue, mock_router):
         """When questions exist, collect → wait → (interrupt) → loop → collect"""
         collect_node = _create_dm_clarification_collect_node(mock_queue, mock_router)
@@ -248,7 +257,7 @@ class TestTwoNodePatternIntegration:
         mock_job.is_failed = False
         mock_queue.enqueue.return_value = mock_job
 
-        # Skip the polling logic
+        # Mock polling to do nothing (job already "complete")
         mock_poll.return_value = None
 
         state = {
@@ -286,3 +295,6 @@ class TestTwoNodePatternIntegration:
 
         # Should loop back to collect
         assert edge_after_wait == "loop"
+
+        # Verify polling was called
+        assert mock_poll.call_count == 1
