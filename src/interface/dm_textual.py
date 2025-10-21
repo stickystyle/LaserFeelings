@@ -111,7 +111,6 @@ class DMTextualInterface(App):
         self._clarification_mode = False
         self._pending_questions = None  # List of question dicts
         self._questions_round = 1
-        self._polling_task = None  # Background polling task
 
         # LASER FEELINGS state
         self._laser_feelings_mode = False
@@ -462,7 +461,6 @@ class DMTextualInterface(App):
                         )
                         self._clarification_mode = False
                         self._pending_questions = None
-                        self._stop_clarification_polling()
 
                         # Resume turn with empty answers - signals orchestrator to proceed to
                         # SECOND_MEMORY_QUERY phase (see CLAUDE.md "Clarifying Questions Phase")
@@ -479,7 +477,6 @@ class DMTextualInterface(App):
                         "[red]✗ Cannot continue - connection issue with orchestrator[/red]"
                     )
                     self._clarification_mode = False
-                    self._stop_clarification_polling()
                     return
 
                 return
@@ -489,7 +486,6 @@ class DMTextualInterface(App):
                 self.write_game_log("[yellow]⊣ Finishing clarification (no more rounds)[/yellow]")
                 self._clarification_mode = False
                 self._pending_questions = None
-                self._stop_clarification_polling()
 
                 # Signal orchestrator to skip remaining clarification - fire-and-forget
                 self._run_blocking_in_background(
@@ -543,7 +539,7 @@ class DMTextualInterface(App):
                 )
 
                 # Send answer to orchestrator - fire-and-forget
-                # Background polling will detect any follow-up questions
+                # Follow-up questions will be checked when DM types "done"
                 try:
                     self._run_blocking_in_background(
                         lambda: self.orchestrator.resume_turn_with_dm_input(
@@ -916,68 +912,6 @@ class DMTextualInterface(App):
         """Check if we're in a clarification question phase"""
         return self.current_phase == GamePhase.DM_CLARIFICATION
 
-    def _stop_clarification_polling(self) -> None:
-        """Stop the clarification question polling task if running"""
-        if self._polling_task and not self._polling_task.done():
-            self._polling_task.cancel()
-            logger.debug("Cancelled clarification polling task")
-        self._polling_task = None
-
-    async def _poll_clarification_questions_continuously(self) -> None:
-        """
-        Continuously poll for new clarification questions in background.
-
-        Runs in background starting when entering clarification mode.
-        Polls every 500ms for new questions and displays them in real-time.
-        Stops when:
-        - Clarification round ends (orchestrator moves past)
-        - DM types "done" or "finish"
-        - Max rounds reached
-        """
-        logger.debug("Starting continuous clarification question polling")
-        poll_interval = 0.5  # 500ms
-
-        try:
-            while self._clarification_mode:
-                await asyncio.sleep(poll_interval)
-
-                # Skip if not in clarification mode anymore
-                if not self._clarification_mode:
-                    logger.debug("Polling stopped: clarification mode ended")
-                    break
-
-                try:
-                    # Fetch new questions
-                    new_questions = self._fetch_new_clarification_questions()
-
-                    if new_questions:
-                        # Display new questions found
-                        count = len(new_questions)
-                        self.write_game_log(
-                            f"[yellow]↻ Found {count} new question(s)[/yellow]"
-                        )
-
-                        # Update question list and display
-                        self.show_clarification_questions(
-                            {
-                                "round": self._questions_round,
-                                "questions": new_questions,
-                            }
-                        )
-
-                except Exception as e:
-                    # Log but don't crash - continue polling
-                    logger.debug(f"Polling error (continuing): {e}")
-                    continue
-
-        except asyncio.CancelledError:
-            logger.debug("Polling task cancelled")
-            raise
-        except Exception as e:
-            logger.error(f"Polling task failed: {e}")
-        finally:
-            logger.debug("Clarification question polling ended")
-
     def _fetch_new_clarification_questions(self) -> list[dict]:
         """
         Fetch new clarification questions from OOC channel.
@@ -1018,9 +952,10 @@ class DMTextualInterface(App):
 
             new_questions = [msg for msg in questions if msg.timestamp > last_answer_time]
 
-            # Convert to expected format
+            # Convert to expected format with message_id for tracking
             return [
                 {
+                    "message_id": msg.message_id,
                     "agent_id": msg.from_agent,
                     "question_text": msg.content,
                 }
@@ -1090,13 +1025,6 @@ class DMTextualInterface(App):
         )
 
         self._clarification_mode = True
-
-        # Start continuous background polling if not already running
-        if self._polling_task is None or self._polling_task.done():
-            self._polling_task = asyncio.create_task(
-                self._poll_clarification_questions_continuously()
-            )
-            logger.debug("Started clarification question polling task")
 
     def _humanize_phase_name(self, phase: GamePhase) -> str:
         """Convert GamePhase enum to human-readable name"""

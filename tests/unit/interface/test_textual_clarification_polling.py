@@ -1,5 +1,5 @@
-# ABOUTME: Unit tests for real-time clarification question polling in Textual DM interface.
-# ABOUTME: Tests fire-and-forget answer submission with continuous background polling.
+# ABOUTME: Unit tests for clarification question handling in Textual DM interface.
+# ABOUTME: Tests fire-and-forget answer submission and round-based follow-up detection.
 
 from unittest.mock import MagicMock, patch
 
@@ -114,164 +114,6 @@ class TestClarificationAnswerFireAndForget:
                 assert not has_processing, "Expected NO processing message (returns immediately)"
 
 
-class TestContinuousBackgroundPolling:
-    """Test that continuous background polling runs for follow-up questions"""
-
-    @pytest.mark.asyncio
-    async def test_polling_task_started_when_entering_clarification_mode(self, textual_app):
-        """Test that polling task is started when clarification mode begins"""
-        import asyncio
-
-        questions_data = {
-            "round": 1,
-            "questions": [{"agent_id": "agent_test", "question_text": "How far?"}],
-        }
-
-        with patch.object(textual_app, "write_game_log"):
-            with patch.object(asyncio, "create_task") as mock_create_task:
-                textual_app.show_clarification_questions(questions_data)
-
-                # Verify polling task was created
-                assert mock_create_task.called, "Expected polling task to be created"
-
-    @pytest.mark.asyncio
-    async def test_polling_runs_continuously(self, textual_app):
-        """Test that polling happens multiple times continuously"""
-        import asyncio
-
-        textual_app._clarification_mode = True
-        call_count = 0
-        max_calls = 3
-
-        def mock_fetch():
-            nonlocal call_count
-            call_count += 1
-            if call_count >= max_calls:
-                # Stop after a few polls
-                textual_app._clarification_mode = False
-            return []
-
-        with patch.object(textual_app, "write_game_log"):
-            with patch.object(
-                textual_app, "_fetch_new_clarification_questions", side_effect=mock_fetch
-            ):
-                # Run polling for a short time
-                poll_task = asyncio.create_task(
-                    textual_app._poll_clarification_questions_continuously()
-                )
-
-                # Wait for task to complete
-                try:
-                    await asyncio.wait_for(poll_task, timeout=2.0)
-                except TimeoutError:
-                    poll_task.cancel()
-
-                # Verify multiple polls happened
-                assert call_count >= 2, f"Expected at least 2 poll calls, got {call_count}"
-
-    @pytest.mark.asyncio
-    async def test_polling_displays_questions_when_found(self, textual_app):
-        """Test that polling displays new questions in real-time"""
-        import asyncio
-
-        textual_app._clarification_mode = True
-        follow_up_questions = [{"agent_id": "agent_alex_001", "question_text": "Are there guards?"}]
-
-        call_count = 0
-
-        def mock_fetch():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First poll: return questions
-                return follow_up_questions
-            else:
-                # Subsequent polls: stop
-                textual_app._clarification_mode = False
-                return []
-
-        with patch.object(textual_app, "write_game_log"):
-            with patch.object(
-                textual_app, "_fetch_new_clarification_questions", side_effect=mock_fetch
-            ):
-                with patch.object(textual_app, "show_clarification_questions") as mock_show:
-                    # Run polling
-                    poll_task = asyncio.create_task(
-                        textual_app._poll_clarification_questions_continuously()
-                    )
-
-                    try:
-                        await asyncio.wait_for(poll_task, timeout=2.0)
-                    except TimeoutError:
-                        poll_task.cancel()
-
-                    # Verify questions were displayed
-                    assert mock_show.called, "Expected show_clarification_questions to be called"
-
-    @pytest.mark.asyncio
-    async def test_polling_stops_when_clarification_mode_ends(self, textual_app):
-        """Test that polling stops when clarification mode is set to False"""
-        import asyncio
-
-        textual_app._clarification_mode = True
-
-        # Start polling
-        poll_task = asyncio.create_task(
-            textual_app._poll_clarification_questions_continuously()
-        )
-
-        # Let it run briefly
-        await asyncio.sleep(0.1)
-
-        # End clarification mode
-        textual_app._clarification_mode = False
-
-        # Wait for polling to stop
-        try:
-            await asyncio.wait_for(poll_task, timeout=1.0)
-        except TimeoutError:
-            poll_task.cancel()
-            pytest.fail("Polling did not stop when clarification mode ended")
-
-        # Verify task completed
-        assert poll_task.done(), "Expected polling task to be done"
-
-    @pytest.mark.asyncio
-    async def test_polling_handles_errors_gracefully(self, textual_app):
-        """Test that polling continues after errors"""
-        import asyncio
-
-        textual_app._clarification_mode = True
-        call_count = 0
-
-        def mock_fetch():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First call: error
-                raise Exception("Test error")
-            else:
-                # Second call: stop
-                textual_app._clarification_mode = False
-                return []
-
-        with patch.object(textual_app, "write_game_log"):
-            with patch.object(
-                textual_app, "_fetch_new_clarification_questions", side_effect=mock_fetch
-            ):
-                poll_task = asyncio.create_task(
-                    textual_app._poll_clarification_questions_continuously()
-                )
-
-                try:
-                    await asyncio.wait_for(poll_task, timeout=2.0)
-                except TimeoutError:
-                    poll_task.cancel()
-
-                # Verify polling continued after error
-                assert call_count >= 2, "Expected polling to continue after error"
-
-
 class TestClarificationErrorHandling:
     """Test error handling during clarification answer processing"""
 
@@ -300,44 +142,12 @@ class TestClarificationErrorHandling:
                 assert has_error, "Expected error message when orchestrator fails"
 
 
-class TestPollingTaskCleanup:
-    """Test that polling task is properly cleaned up when exiting clarification mode"""
+class TestRoundBasedFollowUpDetection:
+    """Test that follow-up questions are detected after DM types 'done'"""
 
     @pytest.mark.asyncio
-    async def test_polling_stopped_on_finish_command(self, textual_app):
-        """Test that polling task is cancelled when 'finish' command is used"""
-
-        # Set up active polling task
-        textual_app._clarification_mode = True
-        textual_app._polling_task = MagicMock()
-        textual_app._polling_task.done.return_value = False
-
-        user_input = "finish"
-        mock_input = MagicMock()
-        mock_input.id = "dm-input"
-        mock_input.value = user_input
-
-        mock_event = MagicMock()
-        mock_event.input = mock_input
-        mock_event.value = user_input
-
-        with patch.object(textual_app, "write_game_log"):
-            with patch.object(textual_app, "_run_blocking_in_background"):
-                with patch.object(textual_app, "_stop_clarification_polling") as mock_stop:
-                    await textual_app.on_input_submitted(mock_event)
-
-                    # Verify polling was stopped
-                    assert mock_stop.called, "Expected _stop_clarification_polling to be called"
-
-    @pytest.mark.asyncio
-    async def test_polling_stopped_on_done_with_no_followups(self, textual_app):
-        """Test that polling task is cancelled when 'done' finds no follow-ups"""
-
-        # Set up active polling task
-        textual_app._clarification_mode = True
-        textual_app._polling_task = MagicMock()
-        textual_app._polling_task.done.return_value = False
-
+    async def test_done_polls_for_followups(self, textual_app):
+        """Test that 'done' command polls for follow-up questions"""
         user_input = "done"
         mock_input = MagicMock()
         mock_input.id = "dm-input"
@@ -351,11 +161,64 @@ class TestPollingTaskCleanup:
             with patch.object(textual_app, "_run_blocking_in_background"):
                 with patch.object(
                     textual_app, "_fetch_new_clarification_questions", return_value=[]
+                ) as mock_fetch:
+                    await textual_app.on_input_submitted(mock_event)
+
+                    # Verify fetch was called (polling for follow-ups)
+                    assert mock_fetch.called, "Expected _fetch_new_clarification_questions to be called"
+
+    @pytest.mark.asyncio
+    async def test_done_shows_followup_questions_if_found(self, textual_app):
+        """Test that follow-up questions are displayed if found"""
+        user_input = "done"
+        mock_input = MagicMock()
+        mock_input.id = "dm-input"
+        mock_input.value = user_input
+
+        mock_event = MagicMock()
+        mock_event.input = mock_input
+        mock_event.value = user_input
+
+        follow_up_questions = [
+            {"agent_id": "agent_alex_001", "question_text": "Follow-up question?"}
+        ]
+
+        with patch.object(textual_app, "write_game_log"):
+            with patch.object(textual_app, "_run_blocking_in_background"):
+                with patch.object(
+                    textual_app,
+                    "_fetch_new_clarification_questions",
+                    return_value=follow_up_questions,
                 ):
-                    with patch.object(
-                        textual_app, "_stop_clarification_polling"
-                    ) as mock_stop:
+                    with patch.object(textual_app, "show_clarification_questions") as mock_show:
                         await textual_app.on_input_submitted(mock_event)
 
-                        # Verify polling was stopped
-                        assert mock_stop.called, "Expected _stop_clarification_polling to be called"
+                        # Verify follow-up questions were displayed
+                        assert mock_show.called, "Expected show_clarification_questions to be called"
+                        call_args = mock_show.call_args[0][0]
+                        assert call_args["round"] == 2, "Expected round 2"
+                        assert call_args["questions"] == follow_up_questions
+
+    @pytest.mark.asyncio
+    async def test_done_proceeds_if_no_followups(self, textual_app):
+        """Test that turn proceeds if no follow-up questions"""
+        user_input = "done"
+        mock_input = MagicMock()
+        mock_input.id = "dm-input"
+        mock_input.value = user_input
+
+        mock_event = MagicMock()
+        mock_event.input = mock_input
+        mock_event.value = user_input
+
+        with patch.object(textual_app, "write_game_log"):
+            with patch.object(textual_app, "_run_blocking_in_background") as mock_bg:
+                with patch.object(
+                    textual_app, "_fetch_new_clarification_questions", return_value=[]
+                ):
+                    await textual_app.on_input_submitted(mock_event)
+
+                    # Verify orchestrator was called to proceed
+                    assert mock_bg.called, "Expected orchestrator to be called to proceed"
+                    # Verify clarification mode was exited
+                    assert not textual_app._clarification_mode

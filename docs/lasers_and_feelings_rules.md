@@ -198,8 +198,6 @@ When you roll **exactly your number** on any die:
 2. You have **LASER FEELINGS** - a special moment of clarity
 3. **Ask the GM one question** and they must answer honestly
 4. The exact match **counts as 1 success**
-5. You can **change your action** if you want based on the answer
-6. **Re-roll** with your new (or same) action
 
 ### Even if Multiple Dice Match:
 - If you roll [3, 3, 4] with number 3, you only get **one question**
@@ -226,10 +224,6 @@ She's an expert (Scientist role) and prepared (described setting up the scan), s
 She stops. "GM, what should I be on the lookout for?"
 
 GM answers: "The energy signature has the same pattern as a Void Cultist trap."
-
-She changes her action: "I'm not scanning anymore—I'm warning the crew and backing away from this location!"
-
-She re-rolls with a new action.
 
 ---
 
