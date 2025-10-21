@@ -1,0 +1,375 @@
+# LangGraph Node Contract: DM Clarification Q&A System
+# Purpose: Allow AI players to ask DM questions after narration before formulating strategy
+# Phases: dm_clarification_collect, dm_clarification_wait in turn cycle
+# Requirements: Realistic TTRPG gameplay where players ask clarifying questions
+
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Commit: d895a93 (Oct 20, 2025)
+# Node names: dm_clarification_collect_node, dm_clarification_wait_node
+# Location: src/orchestration/nodes/clarification_nodes.py
+# Agent method: src/agents/base_persona.py (BasePersonaAgent.formulate_clarifying_question)
+# Worker: src/workers/base_persona_worker.py (base_persona_formulate_clarifying_question)
+
+node_name: dm_clarification_system
+description: |
+  Two-node conditional interrupt pattern that allows AI players to ask the DM
+  clarifying questions after narration but before formulating their strategy.
+  Mimics real TTRPG gameplay where players ask questions like:
+  - "How far away is the door?"
+  - "Do I see any guards?"
+  - "What's the guard's expression?"
+
+  **Architecture**: Two-node pattern for conditional interruption
+  - dm_clarification_collect: Auto-generates questions via LLM, no interrupt
+  - dm_clarification_wait: Interrupts ONLY if questions exist
+
+  **Multi-Round Q&A**: Supports up to 3 rounds of questions
+  - DM answers round 1 questions
+  - Players can ask follow-ups based on answers
+  - Loop continues until no follow-ups or max 3 rounds
+  - DM can type "finish" to force exit
+
+  **Visibility**: All questions and answers visible on OOC channel to all players
+
+# --- TWO-NODE FLOW ---
+flow:
+  sequence:
+    - node: dm_clarification_collect
+      purpose: Generate clarifying questions for all active players
+      interrupt: false
+      routing: |
+        if clarifying_questions_this_round is empty:
+          → skip to second_memory_query (no questions asked)
+        else:
+          → route to dm_clarification_wait (questions exist, pause for DM)
+
+    - node: dm_clarification_wait
+      purpose: Interrupt and wait for DM to answer questions
+      interrupt: true
+      routing: |
+        After DM provides answers:
+          if clarification_round < 3:
+            → loop back to dm_clarification_collect (check for follow-ups)
+          else:
+            → proceed to second_memory_query (max rounds reached)
+
+        If DM types "finish":
+          → proceed to second_memory_query (force exit)
+
+# --- NODE 1: dm_clarification_collect ---
+collect_node:
+  node_name: dm_clarification_collect_node
+
+  input_schema:
+    state_fields:
+      current_phase:
+        type: Literal["dm_clarification_collect"]
+        required: true
+
+      dm_narration:
+        type: str
+        required: true
+        description: DM's narration to ask questions about
+
+      active_agents:
+        type: list[str]
+        required: true
+        description: List of agent_ids to generate questions for
+
+      retrieved_memories:
+        type: dict[str, list[dict]]
+        required: true
+        description: Initial memories from memory_retrieval phase
+
+      all_clarification_questions:
+        type: list[dict]
+        required: false
+        default: []
+        description: Historical log of all Q&A across rounds
+
+      clarification_round:
+        type: int
+        required: false
+        default: 0
+        description: Current round number (0 before first round, 1-3 during rounds)
+
+  output_schema:
+    state_fields:
+      clarifying_questions_this_round:
+        type: dict[str, dict]
+        description: |
+          Questions generated this round:
+          {
+            "agent_id": {
+              "question": str,
+              "reasoning": str,  # Why this question is useful
+              "agent_id": str
+            }
+          }
+          Empty dict if no questions needed
+
+      all_clarification_questions:
+        type: list[dict]
+        description: Appends new questions to historical log
+
+      current_phase:
+        type: Literal["dm_clarification_collect"]
+        description: Stays in collect phase (conditional edge routes next)
+
+  algorithm:
+    - For each active agent:
+        - Call BasePersonaAgent.formulate_clarifying_question()
+        - Pass dm_narration, retrieved_memories, all_clarification_questions
+        - LLM decides: ask question OR return None (no question needed)
+    - Collect all non-None questions into clarifying_questions_this_round
+    - Append to all_clarification_questions log
+    - Return state with questions dict
+
+  examples:
+    - name: First round with questions
+      input:
+        dm_narration: "A hooded figure approaches the airlock"
+        active_agents: ["agent_kira", "agent_marcus"]
+        clarification_round: 0
+      output:
+        clarifying_questions_this_round:
+          agent_kira:
+            question: "Can I see the hooded figure's face or any identifying features?"
+            reasoning: "Need to assess threat level before deciding action"
+            agent_id: "agent_kira"
+          agent_marcus:
+            question: "How far away is the figure, and is there cover nearby?"
+            reasoning: "Tactical positioning information for defensive strategy"
+            agent_id: "agent_marcus"
+        clarification_round: 1
+        current_phase: "dm_clarification_collect"
+
+    - name: No questions needed
+      input:
+        dm_narration: "The ship's alarm blares - hull breach in cargo bay!"
+        active_agents: ["agent_kira"]
+        clarification_round: 0
+      output:
+        clarifying_questions_this_round: {}
+        clarification_round: 0
+        current_phase: "dm_clarification_collect"
+
+# --- NODE 2: dm_clarification_wait ---
+wait_node:
+  node_name: dm_clarification_wait_node
+
+  input_schema:
+    state_fields:
+      current_phase:
+        type: Literal["dm_clarification_wait"]
+        required: true
+
+      clarifying_questions_this_round:
+        type: dict[str, dict]
+        required: true
+        description: Questions to display to DM (should not be empty when entering this node)
+
+      clarification_round:
+        type: int
+        required: true
+        description: Current round number (1-3)
+
+  output_schema:
+    state_fields:
+      dm_clarification_answer:
+        type: str
+        description: DM's answer to all questions in current round
+
+      all_clarification_questions:
+        type: list[dict]
+        description: |
+          Updated with DM answers:
+          [{
+            "round": 1,
+            "agent_id": "agent_kira",
+            "question": "Can I see the hooded figure's face?",
+            "dm_answer": "No, the hood shadows their face completely"
+          }, ...]
+
+      current_phase:
+        type: Literal["dm_clarification_wait"]
+        description: Stays in wait phase (conditional edge routes next)
+
+  interrupt_behavior:
+    description: |
+      This node appears in interrupt_before list in graph compilation.
+      Graph execution pauses here, control returns to CLI.
+      DM types answer, CLI calls resume_turn(dm_clarification_answer="...")
+
+    cli_prompt: |
+      ========================================
+      CLARIFICATION QUESTIONS (Round X/3)
+      ========================================
+
+      1. [Agent Kira] Can I see the hooded figure's face?
+      2. [Agent Marcus] How far away is the figure?
+
+      Enter your answers (or type 'finish' to skip remaining rounds):
+      >
+
+  examples:
+    - name: DM answers round 1 questions
+      input:
+        clarifying_questions_this_round:
+          agent_kira:
+            question: "Can I see the hooded figure's face?"
+          agent_marcus:
+            question: "How far away is the figure?"
+        clarification_round: 1
+      resume_input:
+        dm_clarification_answer: |
+          1. No, the hood completely shadows their face.
+          2. About 20 feet from the airlock door, approaching slowly.
+      output:
+        all_clarification_questions:
+          - round: 1
+            agent_id: "agent_kira"
+            question: "Can I see the hooded figure's face?"
+            dm_answer: "No, the hood completely shadows their face."
+          - round: 1
+            agent_id: "agent_marcus"
+            question: "How far away is the figure?"
+            dm_answer: "About 20 feet from the airlock door, approaching slowly."
+        clarification_round: 1
+        current_phase: "dm_clarification_wait"
+
+    - name: DM forces finish
+      input:
+        clarification_round: 2
+      resume_input:
+        dm_clarification_answer: "finish"
+      output:
+        clarification_round: 3  # Set to max to trigger proceed routing
+        current_phase: "dm_clarification_wait"
+
+# --- CONDITIONAL ROUTING ---
+conditional_edges:
+  - source: dm_clarification_collect
+    function: check_clarification_after_collect
+    routes:
+      wait:
+        condition: len(state["clarifying_questions_this_round"]) > 0
+        destination: dm_clarification_wait
+        description: Questions exist, pause for DM input
+
+      skip:
+        condition: len(state["clarifying_questions_this_round"]) == 0
+        destination: second_memory_query
+        description: No questions, proceed to strategy without clarification
+
+  - source: dm_clarification_wait
+    function: check_clarification_after_wait
+    routes:
+      loop:
+        condition: |
+          state["clarification_round"] < 3 AND
+          dm_clarification_answer != "finish"
+        destination: dm_clarification_collect
+        description: Check for follow-up questions
+
+      proceed:
+        condition: |
+          state["clarification_round"] >= 3 OR
+          dm_clarification_answer == "finish"
+        destination: second_memory_query
+        description: Max rounds reached or DM forced finish
+
+# --- STATE FIELDS INTRODUCED ---
+state_fields:
+  clarification_round:
+    type: NotRequired[int]
+    description: Current Q&A round number (0 before first, 1-3 during rounds)
+    added_in: Phase 3 (commit d895a93)
+
+  awaiting_dm_clarifications:
+    type: NotRequired[bool]
+    description: True when paused at dm_clarification_wait
+    added_in: Phase 3 (commit d895a93)
+
+  clarifying_questions_this_round:
+    type: NotRequired[dict[str, dict]]
+    description: Questions generated in current round only
+    added_in: Phase 3 (commit d895a93)
+
+  all_clarification_questions:
+    type: NotRequired[list[dict]]
+    description: Historical log of all Q&A across all rounds
+    added_in: Phase 3 (commit d895a93)
+
+# --- INTEGRATION NOTES ---
+integration:
+  graph_wiring:
+    location: src/orchestration/graph_builder.py
+    edges: |
+      workflow.add_edge("memory_retrieval", "dm_clarification_collect")
+
+      workflow.add_conditional_edges(
+        "dm_clarification_collect",
+        check_clarification_after_collect,
+        {"wait": "dm_clarification_wait", "skip": "second_memory_query"}
+      )
+
+      workflow.add_conditional_edges(
+        "dm_clarification_wait",
+        check_clarification_after_wait,
+        {"loop": "dm_clarification_collect", "proceed": "second_memory_query"}
+      )
+
+  message_routing:
+    channel: OOC (out-of-character)
+    visibility: All players see all questions and answers
+    dm_participation: DM can post on OOC channel for clarifications
+
+  cli_handler:
+    location: src/interface/dm_cli.py
+    function: handle_dm_clarification_wait
+    display_format: Numbered list with agent names
+
+  worker_function:
+    name: base_persona_formulate_clarifying_question
+    location: src/workers/base_persona_worker.py
+    retry_decorator: "@llm_retry"
+    queue: "base_persona"
+
+# --- PERFORMANCE TARGETS ---
+performance:
+  p50_latency: 1500ms per agent per round
+  p95_latency: 3000ms per agent per round
+  notes: LLM call to decide question + generate question text
+
+# --- TESTING ---
+tests:
+  unit:
+    location: tests/unit/orchestration/test_clarification_conditional_interrupt.py
+    coverage: |
+      - 11 unit tests
+      - Conditional routing (skip, wait, loop, proceed)
+      - Multi-round Q&A flows
+      - DM "finish" command
+      - Empty questions handling
+
+  contract:
+    - Verify collect node does not interrupt
+    - Verify wait node interrupts only when questions exist
+    - Verify max 3 rounds enforced
+    - Verify DM "finish" command works
+
+  integration:
+    - Full multi-round Q&A cycle with actual BasePersonaAgent
+    - Verify questions influence second_memory_query results
+    - Verify OOC channel message routing
+
+# --- REVISION HISTORY ---
+revision_history:
+  - date: 2025-10-21
+    change: Initial contract creation for Phase 3 production feature
+    commit: Contract sync update
+
+  - date: 2025-10-20
+    change: Feature implemented and deployed
+    commit: d895a93 (feat: add player clarifying questions phase with multi-round Q&A)

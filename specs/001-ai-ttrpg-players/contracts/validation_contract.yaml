@@ -1,9 +1,16 @@
 # LangGraph Node Contract: Validation (Narrative Overreach Detection)
 # Purpose: Detect and prevent AI players from narrating action outcomes
 # Phase: validation in turn cycle
-# Requirements: FR-003, FR-004, FR-011
+# Requirements: FR-003, FR-004, FR-011 (User Story 2 - Phase 4)
 
-node_name: validation_node
+# IMPLEMENTATION STATUS: 🔧 UNWIRED (Phase 3)
+# Current behavior: Validation bypassed - character_action routes directly to dm_adjudication
+# Phase 4 integration: Will wire validation_retry and validation_escalate nodes into graph
+# Node names: validation_retry_node, validation_escalate_node
+# Location: src/orchestration/nodes/validation_nodes.py (implemented but not wired)
+# Graph TODO: src/orchestration/graph_builder.py:145-147
+
+node_name: validation_retry_node
 description: |
   The Validation Node enforces the critical constraint that AI characters
   express INTENT ONLY, never narrating outcomes. This preserves DM authority
@@ -12,6 +19,11 @@ description: |
 
   Implements progressive retry logic: up to 3 attempts with increasingly
   strict prompting before fallback (auto-correct or DM flag).
+
+  **Phase 3 Status**: Nodes implemented but intentionally unwired from graph.
+  Character actions go directly to DM adjudication without validation. This is
+  a Phase 4 TODO to enable User Story 2 (Priority P1) "AI Player Prevents
+  Narrative Overreach".
 
 # --- INPUT SCHEMA ---
 input_schema:

@@ -13,47 +13,102 @@ Node contracts define the input/output schemas, validation rules, and behavioral
 
 ## Contract Files
 
-### Core Turn Cycle Nodes
+### Implementation Status Legend
 
-1. **`memory_query_contract.yaml`** - Memory Retrieval Node
-   - **Phase**: `memory_query`
+- ✅ **Production**: Wired into graph and actively used in Phase 3
+- ⚠️ **MVP Stub**: Wired into graph but returns placeholder data (Phase 5+ integration pending)
+- 🔧 **Unwired**: Implemented but intentionally bypassed (Phase 4+ integration)
+- ❌ **Not Implemented**: Design only, no code yet (Phase 7+ future work)
+
+### Phase 3 Production Nodes
+
+1. **`clarification_contract.yaml`** - DM Clarification Q&A System ✅ **NEW**
+   - **Phases**: `dm_clarification_collect`, `dm_clarification_wait`
+   - **Purpose**: Allow AI players to ask DM questions after narration before strategy
+   - **Key Features**:
+     - Two-node conditional interrupt pattern (collect → wait only if questions exist)
+     - Multi-round Q&A loop (up to 3 rounds)
+     - Auto-generation of questions via LLM based on narration
+     - DM can force finish to skip remaining rounds
+     - All Q&A visible on OOC channel
+   - **Status**: ✅ Production (added Oct 20, 2025, commit d895a93)
+
+2. **`memory_query_contract.yaml`** - Memory Retrieval Node ⚠️
+   - **Phase**: `memory_retrieval`, `second_memory_query`
    - **Purpose**: Retrieve relevant memories from Graphiti knowledge graph
    - **Key Features**:
      - Semantic search across personal, character, and shared memories
      - Temporal filtering and memory corruption simulation
      - Rehearsal count tracking for memory strengthening
-     - Support for explicit DM queries
-   - **Requirements**: FR-005, FR-006, FR-007, FR-019
+   - **Status**: ⚠️ MVP Stub - Currently returns empty memories, Phase 5 will add Graphiti integration
 
-2. **`player_agent_contract.yaml`** - Strategic Intent Node
+3. **`player_agent_contract.yaml`** - Strategic Intent Node ✅
    - **Phase**: `strategic_intent`
    - **Purpose**: Strategic decision-making layer (out-of-character)
    - **Key Features**:
      - Personality-driven strategic planning
      - Memory integration for context-aware decisions
-     - Multi-agent OOC discussion initiation
-     - Progressive retry logic for invalid intents
-   - **Requirements**: FR-001, FR-002, FR-006, FR-007, FR-013
+     - Clarifying question generation (Phase 3 addition)
+     - Routes to P2C directive phase (not directly to character)
+   - **Status**: ✅ Production
 
-3. **`character_agent_contract.yaml`** - In-Character Action Node
+4. **`p2c_directive_contract.yaml`** - Player-to-Character Message Routing ✅ **NEW**
+   - **Phase**: `p2c_directive`
+   - **Purpose**: Route strategic intent to character via MessageRouter P2C channel
+   - **Key Features**:
+     - Enforces dual-layer architecture boundary
+     - Uses Redis message routing for clean separation
+     - Enables future interception/filtering features
+   - **Status**: ✅ Production
+
+5. **`character_agent_contract.yaml`** - In-Character Action Node ✅
    - **Phase**: `character_action`
    - **Purpose**: Roleplay layer performing character actions
    - **Key Features**:
      - Directive interpretation through personality lens
      - Intent-only action expression (no outcome narration)
+     - Helper detection (is_helping, helping_character_id)
+     - Prepared/expert detection for dice bonuses
      - Speech pattern and mannerism consistency
-     - Progressive strictness on validation retries
-   - **Requirements**: FR-001, FR-002, FR-003, FR-004, FR-009
+   - **Status**: ✅ Production
 
-4. **`validation_contract.yaml`** - Narrative Overreach Detection Node
+6. **`helper_resolution_contract.yaml`** - Helper Dice Pre-Roll ✅ **NEW**
+   - **Phase**: `resolve_helpers`
+   - **Purpose**: Roll dice for all helping characters before main action
+   - **Key Features**:
+     - Identifies helpers from character actions
+     - Pre-rolls dice for each helper
+     - Counts successful helpers (≥1 success)
+     - Grants +1 die per successful helper to main action
+   - **Status**: ✅ Production (implements Lasers & Feelings "+1d6 if you have help" rule)
+
+7. **`laser_feelings_contract.yaml`** - LASER FEELINGS Question System ✅ **NEW**
+   - **Phase**: `laser_feelings_question`
+   - **Purpose**: Handle exact number roll (LASER FEELINGS game mechanic)
+   - **Key Features**:
+     - Detects exact match on any die
+     - Auto-generates contextual question for DM
+     - DM interrupt point
+     - Answer influences outcome narration
+   - **Status**: ✅ Production (implements core Lasers & Feelings game rule)
+
+### Phase 4+ Future Nodes
+
+8. **`validation_contract.yaml`** - Narrative Overreach Detection Node 🔧
    - **Phase**: `validation`
    - **Purpose**: Prevent AI from narrating action outcomes
    - **Key Features**:
      - Hybrid pattern + semantic validation
      - Up to 3 retry attempts with escalating strictness
      - Auto-correction fallback after max retries
-     - False positive override via LLM semantic check
-   - **Requirements**: FR-003, FR-004, FR-011
+   - **Status**: 🔧 Unwired - Implemented but bypassed, Phase 4 will wire into graph
+
+### Phase 7+ Future Nodes (Not Implemented)
+
+9. **OOC Discussion & Consensus** ❌
+   - **Phases**: `ooc_discussion`, `consensus_detection`
+   - **Purpose**: Multi-agent strategic coordination
+   - **Status**: ❌ Not Implemented - Phase 7 future work
 
 ## Contract Structure
 
@@ -107,59 +162,133 @@ Each contract YAML file contains:
 
 ## LangGraph Workflow Integration
 
+**Phase 3 Production Architecture** (18 nodes, 4 interrupt points)
+
 Nodes connect in this sequence:
 
 ```
-dm_narration
+dm_narration (INTERRUPT for DM input)
     ↓
-memory_query ←─────────────┐ (on error)
-    ↓                       │
-strategic_intent            │
-    ↓                       │
-ooc_discussion (multi-agent only)
-    ↓                       │
-consensus_detection         │
-    ↓                       │
-character_action ←──────────┤ (retry on validation failure)
-    ↓                       │
-validation ─────────────────┘
+memory_retrieval [MVP STUB - returns empty]
     ↓
-dm_adjudication
+dm_clarification_collect (auto-asks players for questions)
     ↓
-dice_resolution
+[Conditional] → dm_clarification_wait (INTERRUPT) OR skip to second_memory_query
+    ↓ (if questions exist)
+dm_clarification_wait (INTERRUPT for DM answers)
     ↓
-dm_outcome
+[Loop back to collect for follow-ups OR proceed after max 3 rounds]
     ↓
-character_reaction
+second_memory_query [MVP STUB - returns empty]
     ↓
-memory_storage
+strategic_intent (player decides strategy)
+    ↓
+p2c_directive (route via MessageRouter P2C channel)
+    ↓
+character_action (character performs action)
+    ↓
+[Phase 4 TODO: validation retry loop - currently bypassed]
+    ↓
+dm_adjudication (INTERRUPT for DM ruling)
+    ↓
+resolve_helpers (pre-roll dice for all helpers)
+    ↓
+dice_resolution (roll action dice with bonuses)
+    ↓
+[Conditional] → laser_feelings_question (INTERRUPT) OR dm_outcome
+    ↓ (if exact number rolled)
+laser_feelings_question (INTERRUPT for GM question)
+    ↓
+dm_outcome (INTERRUPT for DM narration)
+    ↓
+character_reaction (character responds emotionally)
+    ↓
+memory_consolidation [MVP STUB - logs only, no storage]
+    ↓
+END
 ```
 
-### Conditional Edges
+### Conditional Edges (Phase 3 Reality)
 
-- **`validation → character_action`**: Retry on validation failure (max 3 attempts)
-- **`validation → dm_adjudication`**: Proceed on validation success or max retries
-- **`strategic_intent → ooc_discussion`**: Multi-agent coordination
-- **`strategic_intent → character_action`**: Single agent skip coordination
-- **`any_node → error_handler`**: On critical failure, rollback to last stable phase
+- **`dm_clarification_collect → dm_clarification_wait`**: If clarifying_questions_this_round not empty
+- **`dm_clarification_collect → second_memory_query`**: If no questions asked, skip clarification
+- **`dm_clarification_wait → dm_clarification_collect`**: Loop back for follow-ups (max 3 rounds)
+- **`dm_clarification_wait → second_memory_query`**: After max rounds or DM types "finish"
+- **`dice_resolution → laser_feelings_question`**: If any die == character's number (LASER FEELINGS)
+- **`dice_resolution → dm_outcome`**: Normal dice resolution, no exact match
+
+### Interrupt Points (DM Interaction)
+
+The graph pauses at exactly **4 nodes** to wait for DM input:
+
+1. **`dm_clarification_wait`**: DM answers player questions (multi-round Q&A)
+2. **`dm_adjudication`**: DM adjudicates action validity
+3. **`laser_feelings_question`**: DM answers the LASER FEELINGS question
+4. **`dm_outcome`**: DM narrates the outcome of the action
+
+### Phase 4+ Features (Not Yet Wired)
+
+- **`validation_retry`**: Implemented but bypassed - character_action routes directly to dm_adjudication
+- **`validation_escalate`**: Implemented but not wired into graph
+- **`rollback_handler`**: Implemented but not wired into graph
+- **`ooc_discussion`**: Not implemented (Phase 7 - multi-agent coordination)
+- **`consensus_detection`**: Not implemented (Phase 7 - multi-agent coordination)
 
 ## State Management
 
-All nodes operate on a shared `GameState` TypedDict:
+All nodes operate on a shared `GameState` TypedDict with **50+ fields**:
 
 ```python
 class GameState(TypedDict):
-    current_phase: Literal["memory_query", "strategic_intent", ...]
+    # Phase tracking
+    current_phase: Literal["dm_narration", "memory_query", "dm_clarification",
+                           "strategic_intent", "p2c_directive", "character_action", ...]
     turn_number: int
+    session_number: int
+
+    # DM input
     dm_narration: str
-    strategic_intents: dict[str, str]
-    character_actions: dict[str, str]
+    dm_adjudication_needed: bool
+    dm_outcome: NotRequired[str]
+
+    # Strategic layer
+    strategic_intents: dict[str, str]  # agent_id -> intent
+
+    # Character layer (NOTE: ActionDict not simple string!)
+    character_actions: dict[str, ActionDict]  # character_id -> full action object
+    character_reactions: dict[str, str]
+
+    # Memory retrieval
     retrieved_memories: dict[str, list[dict]]
+    retrieved_memories_post_clarification: NotRequired[dict[str, list[dict]]]
+
+    # Clarification system (Phase 3 addition)
+    clarification_round: NotRequired[int]
+    awaiting_dm_clarifications: NotRequired[bool]
+    clarifying_questions_this_round: NotRequired[dict[str, dict]]
+    all_clarification_questions: NotRequired[list[dict]]
+
+    # Dice resolution (multi-die system)
+    dice_count: NotRequired[int]
+    individual_rolls: NotRequired[list[int]]
+    die_successes: NotRequired[list[bool]]
+    total_successes: NotRequired[int]
+    successful_helper_counts: NotRequired[dict[str, int]]  # Phase 3 addition
+
+    # LASER FEELINGS (Phase 3 addition)
+    laser_feelings_indices: NotRequired[list[int]]
+    gm_question: NotRequired[str | None]
+    laser_feelings_answer: NotRequired[str | None]
+
+    # Validation (Phase 4 - not yet active)
     validation_attempt: int
     validation_valid: bool
     validation_failures: dict[str, list[str]]
-    # ... (see data-model.md for complete schema)
+
+    # ... (see data-model.md and src/models/game_state.py for complete 50+ field schema)
 ```
+
+**Note**: `character_actions` is a `dict[str, ActionDict]` with structured data including task_type, is_prepared, is_expert, is_helping, helping_character_id, and justification fields - NOT a simple `dict[str, str]` as early contracts showed.
 
 ## Example Workflow
 
@@ -210,6 +339,21 @@ workflow.add_conditional_edges(
 
 ## Revision History
 
+- **2025-10-21**: Major update to reflect Phase 3 implementation reality
+  - Updated README with actual 18-node architecture (was 8 nodes)
+  - Added clarification_contract.yaml (two-node Q&A system)
+  - Added helper_resolution_contract.yaml (Lasers & Feelings helper mechanics)
+  - Added laser_feelings_contract.yaml (exact number roll question system)
+  - Added p2c_directive_contract.yaml (MessageRouter integration)
+  - Updated memory_query_contract.yaml (marked as MVP stub, Phase 5 pending)
+  - Updated player_agent_contract.yaml (added clarification, P2C routing)
+  - Updated character_agent_contract.yaml (ActionDict structure, helper fields)
+  - Updated validation_contract.yaml (marked as unwired, Phase 4 pending)
+  - Documented 4 interrupt points for DM interaction
+  - Added implementation status legend (Production/MVP Stub/Unwired/Not Implemented)
+  - Updated GameState schema to show 50+ fields including Phase 3 additions
+  - Fixed GamePhase enum to include P2C_DIRECTIVE phase
+
 - **2025-10-19**: Initial contract generation for MVP nodes
   - memory_query_contract.yaml
   - player_agent_contract.yaml
@@ -218,4 +362,4 @@ workflow.add_conditional_edges(
 
 ---
 
-**Note**: These contracts are living documents. Update them as implementation reveals new requirements or edge cases. All changes should maintain backward compatibility with existing LangGraph workflows.
+**Note**: Contracts now accurately reflect Phase 3 production reality. Contracts marked as "MVP Stub", "Unwired", or "Not Implemented" represent future phase work (Phases 4-7). All Phase 3 production features are fully documented.

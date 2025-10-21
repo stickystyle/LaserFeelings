@@ -3,12 +3,23 @@
 # Phase: strategic_intent in turn cycle
 # Requirements: FR-001, FR-002, FR-006, FR-007
 
-node_name: player_agent_strategic_intent
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Node name: strategic_intent_node (factory: _create_strategic_intent_node)
+# Location: src/orchestration/nodes/strategic_nodes.py
+# Agent: src/agents/base_persona.py (BasePersonaAgent.formulate_strategic_intent)
+# Worker: src/workers/base_persona_worker.py
+
+node_name: strategic_intent_node
 description: |
   The Player Agent operates at the strategic "player" layer, making out-of-character
   decisions based on player goals, personality traits, and retrieved memories.
   This node generates high-level strategic intent that will be interpreted by the
   character layer, creating the "interpretation gap" for realistic roleplay.
+
+  **Phase 3 Additions**:
+  - Generates clarifying questions via formulate_clarifying_question() (commit d895a93)
+  - Routes output to P2C directive phase (not directly to character_action)
+  - Receives post-clarification memories if clarification phase occurred
 
 # --- INPUT SCHEMA ---
 input_schema:

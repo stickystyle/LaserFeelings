@@ -1,0 +1,365 @@
+# LangGraph Node Contract: LASER FEELINGS Question System
+# Purpose: Handle exact number roll (LASER FEELINGS game mechanic)
+# Phase: laser_feelings_question (conditional after dice_resolution)
+# Requirements: Lasers & Feelings game rule - "rolling exactly your number"
+
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Issue: Phase 2 Issue #3
+# Node name: laser_feelings_question_node
+# Location: src/orchestration/nodes/outcome_nodes.py:371
+# Dice detection: src/utils/dice.py (roll_lasers_feelings function)
+
+node_name: laser_feelings_question_node
+description: |
+  Handles the LASER FEELINGS game mechanic: when a character rolls exactly
+  their number on any die, they succeed AND get to ask the GM a question which
+  the GM must answer honestly. This grants special insight into the situation.
+
+  **Game Rule** (from Lasers & Feelings RPG):
+  "Rolling exactly your number is LASER FEELINGS - you succeed AND something
+  awesome/terrible happens (GM's choice), AND you get to ask the GM a question
+  which they must answer honestly."
+
+  **Implementation**:
+  - Detects exact match during dice_resolution phase
+  - Stores original roll data in laser_feelings_data
+  - Routes to this interrupt node
+  - Pauses for DM to answer question
+  - Answer influences dm_outcome narration
+  - Proceeds to dm_outcome with answer context
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    current_phase:
+      type: Literal["laser_feelings_question"]
+      required: true
+      description: Enters from dice_resolution when exact match detected
+
+    laser_feelings_data:
+      type: dict
+      required: true
+      description: |
+        Complete data about the LASER FEELINGS occurrence:
+        {
+          "character_id": str,
+          "original_action": ActionDict,  # The action that was being performed
+          "original_roll": {
+            "character_number": int,  # The character's Lasers/Feelings number (2-5)
+            "task_type": "lasers" | "feelings",
+            "is_prepared": bool,
+            "is_expert": bool,
+            "is_helping": bool,
+            "individual_rolls": list[int],  # All dice rolled
+            "die_successes": list[bool],  # Which dice succeeded
+            "laser_feelings_indices": list[int],  # Which dice == character_number
+            "total_successes": int
+          },
+          "gm_question": str  # Auto-generated question based on action context
+        }
+
+    laser_feelings_indices:
+      type: list[int]
+      required: true
+      description: Indices of dice that rolled exact match (0-based)
+
+    gm_question:
+      type: str | None
+      required: false
+      description: Optional pre-generated question from character action
+
+    turn_number:
+      type: int
+      required: true
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    waiting_for_gm_answer:
+      type: bool
+      required: true
+      value: true
+      description: Flag indicating graph is paused for DM input
+
+    laser_feelings_answer:
+      type: str | None
+      required: false
+      description: DM's answer (populated when DM resumes turn)
+
+    current_phase:
+      type: Literal["laser_feelings_question"]
+      required: true
+      description: Stays in this phase until DM answers
+
+    phase_start_time:
+      type: datetime
+      required: true
+      description: Updated to pause start time
+
+# --- CONDITIONAL ROUTING ---
+conditional_routing:
+  source: dice_resolution
+  function: check_laser_feelings
+  routes:
+    question:
+      condition: len(state.get("laser_feelings_indices", [])) > 0
+      destination: laser_feelings_question
+      description: Exact number rolled, pause for GM question
+
+    outcome:
+      condition: len(state.get("laser_feelings_indices", [])) == 0
+      destination: dm_outcome
+      description: Normal roll, proceed directly to outcome
+
+# --- INTERRUPT BEHAVIOR ---
+interrupt_behavior:
+  description: |
+    This node appears in interrupt_before list in graph compilation.
+    Graph execution pauses here, control returns to CLI.
+    DM reads the auto-generated question and types an answer.
+    CLI calls resume_turn(laser_feelings_answer="...") to continue.
+
+  cli_prompt: |
+    ========================================
+    ⚡ LASER FEELINGS! ⚡
+    ========================================
+
+    Character: [Character Name]
+    Rolled: [die value] (exactly their number [N])
+    Action: [character's action narrative_text]
+
+    Question: [gm_question from laser_feelings_data]
+
+    Enter your answer:
+    >
+
+  auto_question_generation:
+    description: |
+      If gm_question not provided in action, system auto-generates
+      contextual question based on:
+      - Character's action narrative
+      - Current scene context from dm_narration
+      - Task type (lasers vs feelings)
+
+    example_questions:
+      lasers_task: "What technical detail about [object/system] do I notice?"
+      feelings_task: "What is [NPC/character]'s true emotional state right now?"
+      generic: "What important detail do I notice in this situation?"
+
+# --- EXAMPLES ---
+examples:
+  - name: LASER FEELINGS on hacking attempt
+    input:
+      current_phase: "laser_feelings_question"
+      laser_feelings_data:
+        character_id: "char_kira"
+        original_action:
+          narrative_text: "I attempt to hack into the ship's security system"
+          task_type: "lasers"
+        original_roll:
+          character_number: 2
+          individual_rolls: [2, 4, 6]  # First die is exact match!
+          laser_feelings_indices: [0]
+          total_successes: 2  # Success on 2 out of 3 dice
+        gm_question: "What security vulnerability do I discover in the system?"
+
+    cli_display: |
+      ⚡ LASER FEELINGS! ⚡
+      Character: Kira
+      Rolled: 2 (exactly their number 2)
+      Action: I attempt to hack into the ship's security system
+
+      Question: What security vulnerability do I discover in the system?
+
+      Enter your answer:
+      >
+
+    dm_answer: |
+      You notice the security protocols are using an outdated encryption
+      standard - one you happen to know has a backdoor exploit from your
+      time in the Rebellion.
+
+    output:
+      laser_feelings_answer: "You notice the security protocols are using..."
+      waiting_for_gm_answer: false
+      # Graph resumes and proceeds to dm_outcome
+
+  - name: LASER FEELINGS on social interaction
+    input:
+      laser_feelings_data:
+        character_id: "char_marcus"
+        original_action:
+          narrative_text: "I try to read the merchant's intentions"
+          task_type: "feelings"
+        original_roll:
+          character_number: 5
+          individual_rolls: [5]  # Exact match!
+          laser_feelings_indices: [0]
+        gm_question: "What is the merchant's true emotional state?"
+
+    dm_answer: "Fear. He's terrified of someone or something - keeps glancing at the door."
+
+# --- DICE DETECTION LOGIC ---
+dice_detection:
+  location: src/utils/dice.py (roll_lasers_feelings function)
+  algorithm: |
+    for i, die in enumerate(individual_rolls):
+      if die == character_number:
+        laser_feelings_indices.append(i)
+
+    if len(laser_feelings_indices) > 0:
+      has_laser_feelings = True
+      # Route to laser_feelings_question node
+
+  success_still_applies:
+    description: |
+      LASER FEELINGS is SUCCESS + question, not a separate outcome.
+      The roll still counts successes normally:
+      - Lasers: dice < character_number succeed
+      - Feelings: dice > character_number succeed
+      - Exact match: counts as both success AND triggers question
+
+    example:
+      character_number: 3
+      roll: [2, 3, 5]
+      lasers_task:
+        die_0: 2 < 3 = success
+        die_1: 3 == 3 = success + LASER FEELINGS!
+        die_2: 5 > 3 = failure
+        total_successes: 2
+        laser_feelings: true
+
+# --- STATE FIELDS INTRODUCED ---
+state_fields:
+  laser_feelings_indices:
+    type: NotRequired[list[int]]
+    description: Indices of dice with exact match (0-based)
+    added_in: Phase 2 Issue #3
+
+  laser_feelings_data:
+    type: NotRequired[dict]
+    description: Complete context for LASER FEELINGS occurrence
+    added_in: Phase 2 Issue #3
+
+  gm_question:
+    type: NotRequired[str | None]
+    description: Question for GM to answer
+    added_in: Phase 2 Issue #3
+
+  laser_feelings_answer:
+    type: NotRequired[str | None]
+    description: GM's answer to the question
+    added_in: Phase 2 Issue #3
+
+  waiting_for_gm_answer:
+    type: NotRequired[bool]
+    description: True when paused at laser_feelings_question
+    added_in: Phase 2 Issue #3
+
+# --- INTEGRATION NOTES ---
+integration:
+  graph_wiring:
+    location: src/orchestration/graph_builder.py
+    conditional_edge: |
+      workflow.add_conditional_edges(
+        "dice_resolution",
+        check_laser_feelings,
+        {
+          "question": "laser_feelings_question",
+          "outcome": "dm_outcome"
+        }
+      )
+
+      workflow.add_edge("laser_feelings_question", "dm_outcome")
+
+    interrupt_configuration: |
+      app = workflow.compile(
+        checkpointer=checkpointer,
+        interrupt_before=[
+          "dm_clarification_wait",
+          "dm_adjudication",
+          "laser_feelings_question",  # LASER FEELINGS interrupt
+          "dm_outcome"
+        ]
+      )
+
+  cli_handler:
+    location: src/interface/dm_cli.py
+    function: handle_laser_feelings_question
+    display: Shows character, roll, action, and question
+    resume: Calls resume_turn(laser_feelings_answer="...")
+
+  outcome_integration:
+    description: |
+      The DM's answer to the LASER FEELINGS question should influence
+      their outcome narration. The answer provides special insight that
+      affects how the scene resolves.
+
+    example:
+      question: "What vulnerability do I find?"
+      answer: "Outdated encryption with known backdoor"
+      outcome_narration: |
+        Your fingers fly across the keyboard, exploiting the ancient
+        encryption protocol. The backdoor you know from your Rebellion
+        days is still there - they never patched it. The security
+        system melts away before you like butter.
+
+# --- GAME MASTER GUIDANCE ---
+gm_guidance:
+  answering_questions:
+    - Be honest - this is the rule
+    - Provide actionable information
+    - Keep it concise (1-2 sentences)
+    - Information should be valuable
+    - Can reveal hidden details, NPC motivations, technical specs, etc.
+
+  question_types:
+    technical_insight: "What weakness/strength does [system] have?"
+    social_insight: "What is [NPC]'s true feeling/motivation?"
+    situational_awareness: "What detail am I missing?"
+    tactical_advantage: "What opportunity do I see?"
+
+  awesome_terrible:
+    description: |
+      GM also decides if LASER FEELINGS triggers something awesome
+      or something terrible (in addition to the question).
+
+    examples:
+      awesome: "You succeed so well that you gain an unexpected advantage"
+      terrible: "You succeed but with an unforeseen complication"
+
+# --- PERFORMANCE TARGETS ---
+performance:
+  detection_latency: <10ms (happens during dice roll)
+  pause_duration: Variable (depends on DM response time)
+  notes: No LLM calls in this node, just state management
+
+# --- TESTING ---
+tests:
+  unit:
+    location: tests/unit/utils/test_dice.py
+    coverage: |
+      - Exact number detection
+      - laser_feelings_indices population
+      - Multiple exact matches in one roll
+
+  contract:
+    - Verify conditional routing works (question vs outcome)
+    - Verify interrupt occurs when expected
+    - Verify laser_feelings_data populated correctly
+    - Verify answer flows to dm_outcome
+
+  integration:
+    - Full turn with LASER FEELINGS occurrence
+    - DM answers question → outcome reflects answer
+    - Verify exact match still counts as success
+
+# --- REVISION HISTORY ---
+revision_history:
+  - date: 2025-10-21
+    change: Initial contract creation for Phase 3 production feature
+    commit: Contract sync update
+
+  - date: 2025-10-XX
+    change: Feature implemented as Phase 2 Issue #3
+    commit: TBD (implemented during Phase 3 development)

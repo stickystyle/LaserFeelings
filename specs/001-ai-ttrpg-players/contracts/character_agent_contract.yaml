@@ -3,12 +3,26 @@
 # Phase: character_action in turn cycle
 # Requirements: FR-001, FR-002, FR-003, FR-004, FR-009
 
-node_name: character_agent_action
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Node name: character_action_node (factory: _create_character_action_node)
+# Location: src/orchestration/nodes/action_nodes.py
+# Agent: src/agents/character.py (CharacterAgent.perform_action)
+# Worker: src/workers/character_worker.py
+
+node_name: character_action_node
 description: |
   The Character Agent operates at the roleplay "character" layer, interpreting
   strategic directives from the player layer and performing in-character actions.
   This node generates dialogue and action descriptions that express INTENT ONLY,
   never narrating outcomes (critical for DM authority preservation).
+
+  **Phase 3 Additions**:
+  - Receives directive via MessageRouter P2C channel (not direct state access)
+  - Detects helpers (is_helping, helping_character_id)
+  - Detects prepared state (is_prepared, prepared_justification)
+  - Detects expert status (is_expert, expert_justification)
+  - Returns ActionDict structure (not simple string)
+  - Classifies task_type as "lasers" or "feelings" for dice resolution
 
 # --- INPUT SCHEMA ---
 input_schema:

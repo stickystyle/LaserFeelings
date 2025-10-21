@@ -1,0 +1,331 @@
+# LangGraph Node Contract: Player-to-Character Directive Routing
+# Purpose: Route strategic intent from player layer to character layer via MessageRouter
+# Phase: p2c_directive (between strategic_intent and character_action)
+# Requirements: Dual-layer architecture boundary enforcement
+
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Node name: p2c_directive_node (factory: _create_p2c_directive_node)
+# Location: src/orchestration/nodes/strategic_nodes.py:118
+# Message routing: src/orchestration/message_router.py (MessageChannel.P2C)
+
+node_name: p2c_directive_node
+description: |
+  Routes strategic intents from player layer to character layer via the
+  MessageRouter P2C (player-to-character) channel. This enforces a clean
+  separation between the strategic decision-making layer and the in-character
+  roleplay layer, preventing direct state coupling.
+
+  **Architectural Significance**:
+  - Enforces dual-layer architecture boundary
+  - Uses Redis message routing for clean separation
+  - Enables future message interception/filtering features
+  - Prevents direct state access between layers
+  - Supports potential future features (whispers, secret directives, etc.)
+
+  **Message Flow**:
+  1. Player layer generates strategic_intent (from strategic_intent_node)
+  2. P2C directive node routes intent via MessageRouter.add_message()
+  3. Message stored in Redis with MessageChannel.P2C
+  4. Character layer retrieves directive from message queue
+  5. Character interprets directive through personality lens
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    current_phase:
+      type: Literal["strategic_intent"]
+      required: true
+      description: Enters from strategic_intent phase
+
+    strategic_intents:
+      type: dict[str, str | dict]
+      required: true
+      description: |
+        Map of agent_id to strategic intent.
+        Intent can be:
+        - Simple string: "Hack the door"
+        - Dict with fields: {"strategic_goal": "...", "reasoning": "..."}
+
+    active_agents:
+      type: list[str]
+      required: true
+      description: List of agent_ids to send directives to
+
+    turn_number:
+      type: int
+      required: true
+
+    session_number:
+      type: int
+      required: true
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    current_phase:
+      type: Literal["p2c_directive"]
+      required: true
+      description: Transitions to p2c_directive (then routes to character_action)
+
+    phase_start_time:
+      type: datetime
+      required: true
+      description: Updated to current time
+
+  side_effects:
+    description: Messages added to Redis via MessageRouter
+    messages:
+      - channel: P2C
+        from_agent: agent_id
+        to_character: character_id (mapped from agent_id)
+        content: strategic_intent text
+        message_type: DIRECTIVE
+        phase: "p2c_directive"
+        turn_number: state["turn_number"]
+        session_number: state["session_number"]
+
+# --- ALGORITHM ---
+algorithm:
+  steps:
+    - step: 1
+      description: Iterate through all active agents
+      code: |
+        for agent_id in state["active_agents"]:
+          strategic_intent = state["strategic_intents"][agent_id]
+
+    - step: 2
+      description: Map agent_id to character_id
+      code: |
+        character_id = _get_character_id_for_agent(agent_id)
+        # Current implementation: assumes 1-to-1 mapping
+        # Future: could support multiple characters per player
+
+    - step: 3
+      description: Extract intent text from strategic_intent
+      code: |
+        if isinstance(strategic_intent, dict):
+          intent_text = strategic_intent.get("strategic_goal", str(strategic_intent))
+        else:
+          intent_text = str(strategic_intent)
+
+    - step: 4
+      description: Route intent via MessageRouter P2C channel
+      code: |
+        router.add_message(
+          channel=MessageChannel.P2C,
+          from_agent=agent_id,
+          to_character=character_id,
+          content=intent_text,
+          message_type=MessageType.DIRECTIVE,
+          phase="p2c_directive",
+          turn_number=state["turn_number"],
+          session_number=state["session_number"]
+        )
+
+    - step: 5
+      description: Return updated state
+      code: |
+        return {
+          **state,
+          "current_phase": "p2c_directive",
+          "phase_start_time": datetime.now(UTC)
+        }
+
+# --- EXAMPLES ---
+examples:
+  - name: Single agent directive
+    input:
+      current_phase: "strategic_intent"
+      active_agents: ["agent_kira"]
+      strategic_intents:
+        agent_kira:
+          strategic_goal: "Hack into the door control system"
+          reasoning: "We need quick access without alerting guards"
+      turn_number: 5
+      session_number: 1
+
+    output:
+      current_phase: "p2c_directive"
+      phase_start_time: "2025-10-21T10:30:00Z"
+
+    messages_routed:
+      - channel: P2C
+        from_agent: "agent_kira"
+        to_character: "char_kira"
+        content: "Hack into the door control system"
+        message_type: DIRECTIVE
+        phase: "p2c_directive"
+
+  - name: Multi-agent directive
+    input:
+      active_agents: ["agent_kira", "agent_marcus", "agent_sylas"]
+      strategic_intents:
+        agent_kira: "Hack the door"
+        agent_marcus: "Cover Kira while she works"
+        agent_sylas: "Watch for guards approaching"
+
+    messages_routed:
+      - {from_agent: "agent_kira", to_character: "char_kira", content: "Hack the door"}
+      - {from_agent: "agent_marcus", to_character: "char_marcus", content: "Cover Kira while she works"}
+      - {from_agent: "agent_sylas", to_character: "char_sylas", content: "Watch for guards approaching"}
+
+# --- MESSAGE ROUTING ---
+message_routing:
+  channel: P2C (Player-to-Character)
+
+  visibility:
+    description: Messages on P2C channel are private to the target character
+    visible_to:
+      - The specific character_id in to_character field
+      - NOT visible to other characters
+      - NOT visible to other players (unless same player controls multiple characters)
+      - DM can see all channels for debugging
+
+  redis_storage:
+    key_pattern: "messages:p2c:{character_id}"
+    ttl: "Until turn completes (then archived)"
+    retrieval: "Character agent queries messages for their character_id"
+
+  message_structure:
+    fields:
+      - message_id: str (UUID)
+      - channel: "P2C"
+      - from_agent: str (agent_id)
+      - to_character: str (character_id)
+      - content: str (the directive text)
+      - message_type: "DIRECTIVE"
+      - phase: "p2c_directive"
+      - turn_number: int
+      - session_number: int
+      - timestamp: datetime
+
+# --- DUAL-LAYER ARCHITECTURE ---
+dual_layer_architecture:
+  separation_enforced:
+    description: |
+      P2C directive phase creates a clean boundary between layers:
+
+      PLAYER LAYER (strategic)
+      ↓ strategic_intent
+      ↓
+      P2C DIRECTIVE NODE (boundary)
+      ↓ MessageRouter.add_message(channel=P2C)
+      ↓ Redis storage
+      ↓ MessageRouter.get_messages(channel=P2C, character_id=X)
+      ↓
+      CHARACTER LAYER (roleplay)
+
+    benefits:
+      - No direct state coupling between layers
+      - Clean message-based communication
+      - Testable in isolation
+      - Enables future features (message filtering, logging, replay)
+      - Supports potential multi-character-per-player scenarios
+
+  future_enhancements:
+    - Message interception for DM override
+    - Secret directives (player hides intent from other players)
+    - Directive history/replay for debugging
+    - Character "misunderstanding" simulation (intentional misinterpretation)
+
+# --- CHARACTER RETRIEVAL ---
+character_retrieval:
+  location: src/orchestration/nodes/action_nodes.py (_create_character_action_node)
+  process: |
+    1. Character action node starts
+    2. Calls router.get_messages(
+         channel=MessageChannel.P2C,
+         character_id=character_id,
+         phase="p2c_directive"
+       )
+    3. Retrieves directive message
+    4. Passes directive to CharacterAgent.perform_action()
+    5. Character interprets directive through personality lens
+
+  error_handling:
+    - No messages found: Log warning, use empty directive
+    - Multiple messages: Use most recent (by timestamp)
+    - Malformed message: Log error, fall back to strategic_intent from state
+
+# --- INTEGRATION NOTES ---
+integration:
+  graph_wiring:
+    location: src/orchestration/graph_builder.py
+    edges: |
+      workflow.add_edge("strategic_intent", "p2c_directive")
+      workflow.add_edge("p2c_directive", "character_action")
+
+  message_router_dependency:
+    description: |
+      Node requires MessageRouter instance injected via factory pattern.
+      Graph builder creates router and passes to node factory.
+
+    factory_pattern: |
+      router = MessageRouter(redis_client)
+      p2c_directive_node = _create_p2c_directive_node(router)
+      workflow.add_node("p2c_directive", p2c_directive_node)
+
+  agent_mapping:
+    helper_function: _get_character_id_for_agent(agent_id)
+    location: src/orchestration/nodes/helpers.py
+    logic: |
+      # Current MVP: Simple string replacement
+      return agent_id.replace("agent_", "char_")
+
+      # Future: Load from character config
+      # character_config = load_config(agent_id)
+      # return character_config.character_id
+
+# --- PERFORMANCE TARGETS ---
+performance:
+  p50_latency: 50ms
+  p95_latency: 150ms
+  notes: Fast Redis message routing, no LLM calls
+
+# --- TESTING ---
+tests:
+  unit:
+    location: tests/unit/orchestration/test_p2c_directive.py
+    coverage: |
+      - Single agent directive routing
+      - Multi-agent directive routing
+      - Strategic intent as string
+      - Strategic intent as dict
+      - Message structure validation
+
+  contract:
+    - Verify messages appear in Redis with correct channel
+    - Verify messages retrievable by character_id
+    - Verify message content matches strategic_intent
+    - Verify phase transitions correctly
+
+  integration:
+    - Full turn flow: strategic_intent → p2c_directive → character_action
+    - Verify character receives correct directive
+    - Verify character doesn't see other characters' directives
+
+# --- STATE FIELDS INTRODUCED ---
+state_fields:
+  # NOTE: P2C directive phase doesn't add new state fields
+  # It routes existing strategic_intents via MessageRouter
+  # State transition: strategic_intent → p2c_directive → character_action
+
+  phase_addition:
+    name: P2C_DIRECTIVE
+    value: "p2c_directive"
+    added_to_enum: Phase 3 (this contract update)
+    location: src/models/game_state.py:33
+
+# --- REVISION HISTORY ---
+revision_history:
+  - date: 2025-10-21
+    change: Initial contract creation for Phase 3 production feature
+    commit: Contract sync update
+
+  - date: 2025-10-21
+    change: Added P2C_DIRECTIVE to GamePhase enum
+    commit: Contract sync update (fix missing phase)
+
+  - date: 2025-10-XX
+    change: Feature implemented during Phase 3 development
+    commit: TBD (implemented early in Phase 3)

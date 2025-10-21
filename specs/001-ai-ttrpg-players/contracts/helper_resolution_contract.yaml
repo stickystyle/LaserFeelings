@@ -1,0 +1,335 @@
+# LangGraph Node Contract: Helper Resolution
+# Purpose: Roll dice for all helping characters before main action
+# Phase: resolve_helpers (between dm_adjudication and dice_resolution)
+# Requirements: Lasers & Feelings game rule "+1d6 if you have help"
+
+# IMPLEMENTATION STATUS: ✅ PRODUCTION (Phase 3)
+# Issue: Phase 1 Issue #2
+# Node name: resolve_helpers_node
+# Location: src/orchestration/nodes/outcome_nodes.py:42
+# Dice logic: src/utils/dice.py (roll_lasers_feelings function)
+
+node_name: resolve_helpers_node
+description: |
+  Resolves all "helping" character actions before the main action dice roll.
+  Implements the Lasers & Feelings game rule: "+1d6 if you have help".
+
+  **Helper Success Threshold**:
+  - Helper rolls their own dice (base 1d6 + bonuses for prepared/expert)
+  - Helper is "successful" if total_successes >= 1
+  - Each successful helper grants +1 bonus die to the character they're helping
+  - Failed helpers (0 successes) provide no bonus and no penalty
+
+  **Process**:
+  1. Identify primary actions (non-helping actions)
+  2. For each primary character:
+     a. Find all helpers targeting this character
+     b. Validate helpers are targeting valid characters
+     c. For each valid helper:
+        - Load helper's character number from character sheet
+        - Build dice pool (helper's own prepared/expert bonuses apply)
+        - Roll dice using roll_lasers_feelings() with successful_helpers=0
+        - Check if total_successes >= 1 (threshold for successful help)
+     d. Count successful helpers
+     e. Store count in successful_helper_counts dict
+  3. Return updated state for main dice_resolution
+
+# --- INPUT SCHEMA ---
+input_schema:
+  state_fields:
+    current_phase:
+      type: Literal["dm_adjudication"]
+      required: true
+      description: Enters from dm_adjudication phase
+
+    character_actions:
+      type: dict[str, ActionDict]
+      required: true
+      description: |
+        All character actions including helpers.
+        ActionDict fields:
+          - is_helping: bool (True for helpers)
+          - helping_character_id: str (target character)
+          - help_justification: str
+          - task_type: "lasers" | "feelings"
+          - is_prepared: bool
+          - is_expert: bool
+
+    turn_number:
+      type: int
+      required: true
+
+# --- OUTPUT SCHEMA ---
+output_schema:
+  state_fields:
+    successful_helper_counts:
+      type: dict[str, int]
+      required: true
+      description: |
+        Map of primary character_id → count of successful helpers
+        Example:
+          {
+            "char_kira": 2,  # 2 helpers achieved >= 1 success
+            "char_marcus": 0  # No helpers or all helpers failed
+          }
+
+    current_phase:
+      type: Literal["dice_resolution"]
+      required: true
+      description: Always transitions to dice_resolution
+
+    phase_start_time:
+      type: datetime
+      required: true
+      description: Updated to current time
+
+# --- ALGORITHM ---
+algorithm:
+  steps:
+    - step: 1
+      description: Initialize successful_helper_counts dict
+
+    - step: 2
+      description: |
+        Identify primary actions:
+          primary_actions = {
+            char_id: action
+            for char_id, action in character_actions.items()
+            if not action.get("is_helping", False)
+          }
+
+    - step: 3
+      description: For each primary character, find helpers
+      logic: |
+        helpers = [
+          (helper_id, helper_action)
+          for helper_id, helper_action in character_actions.items()
+          if helper_action.get("is_helping", False)
+          and helper_action.get("helping_character_id") == primary_char_id
+        ]
+
+    - step: 4
+      description: For each helper, roll dice and check success
+      logic: |
+        for helper_id, helper_action in helpers:
+          # Load helper's character number from config/character sheet
+          helper_number = load_character_number(helper_id)
+
+          # Extract helper's bonuses (from their own action)
+          task_type = helper_action.get("task_type", "lasers")
+          is_prepared = helper_action.get("is_prepared", False)
+          is_expert = helper_action.get("is_expert", False)
+
+          # Roll helper's dice (helpers don't get helper bonuses themselves)
+          roll_result = roll_lasers_feelings(
+            character_number=helper_number,
+            task_type=task_type,
+            is_prepared=is_prepared,
+            is_expert=is_expert,
+            successful_helpers=0  # Helpers don't receive help themselves
+          )
+
+          # Check success threshold
+          if roll_result.total_successes >= 1:
+            successful_helper_count += 1
+
+    - step: 5
+      description: Store successful helper counts in state
+      logic: |
+        successful_helper_counts[primary_char_id] = successful_helper_count
+
+    - step: 6
+      description: Return updated state for dice_resolution phase
+
+# --- EXAMPLES ---
+examples:
+  - name: Two helpers, both successful
+    input:
+      character_actions:
+        char_kira:
+          narrative_text: "I hack the door controls"
+          task_type: "lasers"
+          is_prepared: true
+          is_expert: false
+          is_helping: false
+
+        char_marcus:
+          narrative_text: "I cover Kira while she works"
+          task_type: "lasers"
+          is_prepared: false
+          is_expert: false
+          is_helping: true
+          helping_character_id: "char_kira"
+
+        char_sylas:
+          narrative_text: "I watch the hallway for guards"
+          task_type: "feelings"
+          is_prepared: false
+          is_expert: true
+          is_helping: true
+          helping_character_id: "char_kira"
+
+    helper_rolls:
+      char_marcus:
+        character_number: 3
+        dice_count: 1  # Base die only (not prepared, not expert)
+        individual_rolls: [2]  # Lasers task, rolled 2 < 3, success!
+        total_successes: 1
+        result: SUCCESSFUL HELPER
+
+      char_sylas:
+        character_number: 4
+        dice_count: 2  # Base + expert bonus
+        individual_rolls: [5, 6]  # Feelings task, both > 4, both succeed!
+        total_successes: 2
+        result: SUCCESSFUL HELPER
+
+    output:
+      successful_helper_counts:
+        char_kira: 2  # Both Marcus and Sylas succeeded
+      current_phase: "dice_resolution"
+
+  - name: One helper succeeds, one fails
+    input:
+      character_actions:
+        char_kira:
+          is_helping: false
+
+        char_marcus:
+          is_helping: true
+          helping_character_id: "char_kira"
+          task_type: "lasers"
+
+        char_sylas:
+          is_helping: true
+          helping_character_id: "char_kira"
+          task_type: "lasers"
+
+    helper_rolls:
+      char_marcus:
+        individual_rolls: [2]  # Success
+        total_successes: 1
+
+      char_sylas:
+        individual_rolls: [5]  # Failed (needed < 4 for lasers)
+        total_successes: 0
+
+    output:
+      successful_helper_counts:
+        char_kira: 1  # Only Marcus succeeded
+
+  - name: No helpers
+    input:
+      character_actions:
+        char_kira:
+          is_helping: false
+        char_marcus:
+          is_helping: false
+
+    output:
+      successful_helper_counts:
+        char_kira: 0
+        char_marcus: 0
+
+# --- DICE INTEGRATION ---
+dice_integration:
+  description: |
+    The successful_helper_count is passed to dice_resolution_node,
+    which then passes it to roll_lasers_feelings() as the
+    successful_helpers parameter.
+
+  dice_pool_calculation: |
+    Base dice: 1d6
+    + Prepared bonus: +1d6 if is_prepared
+    + Expert bonus: +1d6 if is_expert
+    + Helper bonus: +1d6 per successful helper (from this node)
+    = Total dice count (max 3d6 per rules)
+
+  example:
+    scenario: Kira hacks the door
+    kira_action:
+      is_prepared: true  # +1 die
+      is_expert: false
+    successful_helpers: 2  # +2 dice (from this node)
+    total_dice: 4  # But capped at 3d6 by game rules
+    final_dice_count: 3d6
+
+# --- ERROR HANDLING ---
+error_conditions:
+  invalid_helping_target:
+    description: Helper specifies helping_character_id that doesn't exist
+    behavior: Log warning, skip helper, continue with other helpers
+    example: "char_marcus helping char_INVALID → skipped"
+
+  missing_character_config:
+    description: Cannot load character number for helper
+    behavior: Log error, skip helper, continue with other helpers
+    example: "Unable to load character number for char_ghost → skipped"
+
+  helper_roll_failure:
+    description: Helper's roll crashes or errors
+    behavior: Log error, treat as 0 successes, continue
+    example: "Helper roll failed → counted as 0 successes"
+
+# --- STATE FIELDS INTRODUCED ---
+state_fields:
+  successful_helper_counts:
+    type: NotRequired[dict[str, int]]
+    description: Map of character_id → count of successful helpers
+    added_in: Phase 1 Issue #2
+    used_by: dice_resolution_node to calculate bonus dice
+
+# --- INTEGRATION NOTES ---
+integration:
+  graph_wiring:
+    location: src/orchestration/graph_builder.py
+    edge: |
+      workflow.add_edge("dm_adjudication", "resolve_helpers")
+      workflow.add_edge("resolve_helpers", "dice_resolution")
+
+  lasers_feelings_rules:
+    reference: docs/lasers_and_feelings_rpg.pdf
+    rule: "+1d6 if you have help"
+    interpretation: |
+      - Each successful helper (>= 1 success) grants +1 die
+      - Multiple helpers stack
+      - Helper must roll their own dice first
+      - Helper success/failure independent of main action
+
+# --- PERFORMANCE TARGETS ---
+performance:
+  p50_latency: 100ms per helper
+  p95_latency: 300ms per helper
+  notes: Dice rolls are fast, no LLM calls in this node
+
+# --- TESTING ---
+tests:
+  unit:
+    location: tests/unit/orchestration/test_helper_resolution.py
+    coverage: |
+      - Multiple helpers scenario
+      - Helper success threshold (>= 1)
+      - Helper failure (0 successes)
+      - No helpers scenario
+      - Invalid helper targets
+      - Helper with prepared/expert bonuses
+
+  contract:
+    - Verify successful_helper_counts correct for various scenarios
+    - Verify helpers don't receive helper bonuses themselves
+    - Verify invalid targets handled gracefully
+
+  integration:
+    - Full turn with helpers → verify bonus dice applied in dice_resolution
+    - Verify helper rolls visible in logs
+    - Verify helper success threshold works correctly
+
+# --- REVISION HISTORY ---
+revision_history:
+  - date: 2025-10-21
+    change: Initial contract creation for Phase 3 production feature
+    commit: Contract sync update
+
+  - date: 2025-10-XX
+    change: Feature implemented as Phase 1 Issue #2
+    commit: TBD (implemented during Phase 3 development)

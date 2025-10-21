@@ -1,12 +1,25 @@
 # LangGraph Node Contract: Memory Query
 # Purpose: Retrieve relevant memories from Graphiti knowledge graph
-# Phase: memory_query in turn cycle
+# Phase: memory_retrieval, second_memory_query in turn cycle
 # Requirements: FR-005, FR-006, FR-007, FR-019
 
-node_name: memory_query_node
+# IMPLEMENTATION STATUS: ⚠️ MVP STUB (Phase 3)
+# Current behavior: Returns empty memories for all agents
+# Phase 5 integration: Will connect to GraphitiClient for actual retrieval
+# Node names: memory_retrieval_node, second_memory_query_node
+
+node_name: memory_retrieval_node
 description: |
-  The Memory Query Node retrieves relevant memories from the Graphiti knowledge
+  The Memory Retrieval Node retrieves relevant memories from the Graphiti knowledge
   graph to provide context for strategic decision-making and character actions.
+
+  **Phase 3 Status**: MVP stub implementation - returns empty memory lists to unblock
+  character action testing. Full Graphiti integration pending in Phase 5 (User Story 3).
+
+  **Two-Node Pattern**:
+  - memory_retrieval: Initial query after dm_narration
+  - second_memory_query: Re-query after clarification Q&A with DM answers as context
+
   Supports temporal queries, memory corruption simulation, and separation between
   personal, shared, and character-layer memories.
 

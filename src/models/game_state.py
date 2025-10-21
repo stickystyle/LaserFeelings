@@ -30,6 +30,7 @@ class GamePhase(str, Enum):
     MEMORY_QUERY = "memory_query"
     DM_CLARIFICATION = "dm_clarification"
     STRATEGIC_INTENT = "strategic_intent"
+    P2C_DIRECTIVE = "p2c_directive"  # Player-to-character directive routing via MessageRouter
     OOC_DISCUSSION = "ooc_discussion"
     CONSENSUS_DETECTION = "consensus_detection"
     CHARACTER_ACTION = "character_action"
@@ -52,6 +53,7 @@ class GameState(TypedDict):
         "memory_query",
         "dm_clarification",
         "strategic_intent",
+        "p2c_directive",
         "ooc_discussion",
         "consensus_detection",
         "character_action",
