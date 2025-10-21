@@ -191,6 +191,11 @@ class DMTextualInterface(App):
         # Update turn status display
         self.update_turn_status()
 
+    def on_unmount(self) -> None:
+        """Called when app is unmounted - cleanup resources"""
+        logger.debug("Shutting down thread pool executor")
+        self._executor.shutdown(wait=True)
+
     def write_game_log(self, content: str) -> None:
         """
         Write message to game log.
@@ -533,17 +538,63 @@ class DMTextualInterface(App):
                     f"[green]✓ Answer recorded:[/green] {char_name} - {answer_text}"
                 )
 
-                # Run orchestrator call in background without blocking UI
-                self._run_blocking_in_background(
-                    lambda: self.orchestrator.resume_turn_with_dm_input(
-                        session_number=self.session_number,
-                        dm_input_type="dm_clarification_answer",
-                        dm_input_data={
-                            "answers": [{"agent_id": agent_id, "answer": answer_text}],
-                            "force_finish": False,
-                        },
+                # Show processing message while waiting for orchestrator
+                self.write_game_log("[dim]Processing... waiting for agents[/dim]")
+
+                # Wait for orchestrator to complete (blocking but doesn't freeze UI)
+                try:
+                    await self._run_blocking_call(
+                        lambda: self.orchestrator.resume_turn_with_dm_input(
+                            session_number=self.session_number,
+                            dm_input_type="dm_clarification_answer",
+                            dm_input_data={
+                                "answers": [{"agent_id": agent_id, "answer": answer_text}],
+                                "force_finish": False,
+                            },
+                        )
                     )
-                )
+                except Exception as e:
+                    logger.error(f"Orchestrator call failed: {e}")
+                    self.write_game_log(
+                        f"[red]✗ Failed to process answer: {e}[/red]"
+                    )
+                    self.write_game_log(
+                        "[yellow]⚠ Clarification mode is still active. "
+                        "Type 'finish' to exit and continue the game.[/yellow]"
+                    )
+                    # Keep clarification mode active so user can use 'finish' command
+                    return
+
+                # Immediately poll for new follow-up questions
+                try:
+                    new_questions = self._fetch_new_clarification_questions()
+                except Exception as e:
+                    logger.error(f"Failed to fetch clarification questions: {e}")
+                    self.write_game_log(
+                        "[yellow]⚠ Warning: Cannot check for follow-up questions. "
+                        "Connection issue with orchestrator.[/yellow]"
+                    )
+                    # Continue with empty list - graceful degradation
+                    new_questions = []
+
+                if new_questions:
+                    # Display new follow-up questions detected
+                    count = len(new_questions)
+                    self.write_game_log(
+                        f"[yellow]New follow-up questions detected: {count} question(s)[/yellow]"
+                    )
+
+                    # Display the new questions
+                    self.show_clarification_questions(
+                        {
+                            "round": self._questions_round + 1,
+                            "questions": new_questions,
+                        }
+                    )
+                else:
+                    # No new questions - check if we should exit clarification mode
+                    # The orchestrator might have moved past clarification phase
+                    self.write_game_log("[dim]No new follow-up questions[/dim]")
 
                 return
 
